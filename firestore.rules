@@ -1,21 +1,136 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Helper function to check if user is authenticated
+
+    // ────────────────────────────────────────────────────────────────
+    // SECURITY HELPERS & ZERO-TRUST GATES
+    // ────────────────────────────────────────────────────────────────
+
     function isAuthenticated() {
       return request.auth != null;
     }
-    // Helper function to check if user owns the document
+
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    match /users/{userId} {
-      allow read, write: if isOwner(userId);
+    function isAdmin() {
+      return isAuthenticated() &&
+        (request.auth.token.admin == true ||
+         request.auth.token.role == 'admin');
+    }
 
-      match /{subcollection=**} {
-        allow read, write: if isOwner(userId);
+    // ────────────────────────────────────────────────────────────────
+    // VALIDATION HELPERS
+    // ────────────────────────────────────────────────────────────────
+
+    function isValidUserProfileCreate(userId) {
+      let data = request.resource.data;
+      return data.userId == userId
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 60
+        && (!('role' in data) || data.role == 'user')
+        && (!('isAdmin' in data) || data.isAdmin == false)
+        && (!('admin' in data) || data.admin == false);
+    }
+
+    function isValidUserProfileUpdate() {
+      let incoming = request.resource.data;
+      let existing = resource.data;
+      
+      // The client is strictly forbidden from directly altering economy, level, CEFR, or admin roles.
+      // These are only mutated by server-authoritative API endpoints using Admin SDK.
+      let protectedFieldsUnchanged =
+        (!('xp' in incoming) || incoming.xp == existing.xp) &&
+        (!('coins' in incoming) || incoming.coins == existing.coins) &&
+        (!('level' in incoming) || incoming.level == existing.level) &&
+        (!('cefrLevel' in incoming) || incoming.cefrLevel == existing.cefrLevel) &&
+        (!('overallScore' in incoming) || incoming.overallScore == existing.overallScore) &&
+        (!('skillScores' in incoming) || incoming.skillScores == existing.skillScores) &&
+        (!('role' in incoming) || incoming.role == existing.role) &&
+        (!('isAdmin' in incoming) || incoming.isAdmin == existing.isAdmin) &&
+        (!('admin' in incoming) || incoming.admin == existing.admin) &&
+        (!('completedMissionIds' in incoming) || incoming.completedMissionIds == existing.completedMissionIds);
+
+      return protectedFieldsUnchanged;
+    }
+
+    function isValidVocabDiscoveryCreate() {
+      let data = request.resource.data;
+      return data.id is string
+        && data.word is string && data.word.size() > 0 && data.word.size() <= 100
+        && data.definition is string && data.definition.size() <= 500;
+    }
+
+    function isValidConversation() {
+      let data = request.resource.data;
+      return data.npcId is string
+        && data.userId is string
+        && data.messages is list
+        && data.messages.size() <= 60;
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // COLLECTION RULES
+    // ────────────────────────────────────────────────────────────────
+
+    // 1. User Profiles
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId) && isValidUserProfileCreate(userId);
+      allow update: if isOwner(userId) && isValidUserProfileUpdate();
+      allow delete: if isAdmin();
+
+      // 2. Vocabulary & SM-2 Flashcards
+      // Clients may create initial word discoveries; SM-2 telemetry is updated via server API.
+      match /vocabulary/{wordId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create: if isOwner(userId) && isValidVocabDiscoveryCreate();
+        allow update: if false; // Server authoritative update only
+        allow delete: if isOwner(userId) || isAdmin();
       }
+
+      // 3. Missions Progress (Server authoritative only)
+      match /missions/{missionId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow write: if false; // Only server routes with Admin SDK can mutate mission progress
+      }
+
+      // 4. NPC Memories (Server extracted & verified only)
+      match /npc_memories/{memoryId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow write: if false; // Server authoritative memory extraction
+      }
+
+      // 5. Conversation History Sessions
+      match /conversations/{npcId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create, update: if isOwner(userId) && isValidConversation();
+        allow delete: if isOwner(userId) || isAdmin();
+      }
+
+      // 6. Economy Audit Transactions (Ledger)
+      match /economy_transactions/{txId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow write: if false; // Server authoritative transactions only
+      }
+
+      // 7. Learner Model Telemetry Records
+      match /learner_model/{docId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow write: if false; // Server authoritative telemetry only
+      }
+    }
+
+    // 8. Admin Metadata
+    match /admins/{adminId} {
+      allow read, write: if isAdmin();
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // DEFAULT DENY CATCH-ALL
+    // ────────────────────────────────────────────────────────────────
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

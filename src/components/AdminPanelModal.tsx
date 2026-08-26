@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { PlayerProfile, CEFRLevel, NPC, Mission } from "../types";
 import { sound, speakText } from "../utils/audioSynthesizer";
+import { apiPost } from "../lib/apiClient";
 import {
   Settings,
   X,
@@ -31,13 +32,30 @@ export const AdminPanelModal: React.FC<AdminPanelModalProps> = ({
     onUpdatePlayer((prev) => ({ ...prev, level: lvl }));
   };
 
-  const handleAddCurrency = () => {
+  const handleAddCurrency = async () => {
     sound.playCoin();
-    onUpdatePlayer((prev) => ({
-      ...prev,
-      coins: prev.coins + 500,
-      xp: prev.xp + 1000,
-    }));
+    try {
+      const res = await apiPost<{ xp: number; level: number; coins: number }>("/api/player/reward-xp", {
+        xp: 1000,
+        coins: 500,
+        reason: "Developer sandbox testing boost",
+        source: "admin_panel",
+      });
+      if (res && res.xp !== undefined) {
+        onUpdatePlayer((prev) => ({
+          ...prev,
+          coins: res.coins ?? (prev.coins + 500),
+          xp: res.xp,
+          level: res.level ?? prev.level,
+        }));
+      }
+    } catch (e) {
+      onUpdatePlayer((prev) => ({
+        ...prev,
+        coins: prev.coins + 500,
+        xp: prev.xp + 1000,
+      }));
+    }
   };
 
   const handleTestAudio = () => {

@@ -5,12 +5,62 @@ import {
   CitySign,
   DistrictId,
   InteractiveObject,
+  CityLocation,
+  NeighborhoodData,
+  StreetData,
 } from "../../types";
 import { WORLD_DISTRICTS } from "../../content/districts/worldData";
 import { ENVIRONMENTAL_SIGNS } from "../../content/signs/environmentalSigns";
 import { REAL_WORLD_TASKS } from "../../content/tasks/realWorldTasks";
 
 export class WorldEngine {
+  // Pre-indexed fast lookup hash maps
+  private static districtsById = new Map<string, DistrictData>();
+  private static neighborhoodsById = new Map<string, NeighborhoodData>();
+  private static streetsById = new Map<string, StreetData>();
+  private static buildingsById = new Map<string, BuildingData>();
+  private static roomsById = new Map<string, RoomData>();
+  private static signsByDistrict = new Map<DistrictId, CitySign[]>();
+  private static locationsByDistrict = new Map<string, CityLocation[]>();
+  private static allLocationsCache: CityLocation[] | null = null;
+  private static isInitialized = false;
+
+  private static initializeIndices(): void {
+    if (this.isInitialized) return;
+
+    // 1. Index Districts, Neighborhoods, Streets, Buildings, and Rooms
+    for (const district of WORLD_DISTRICTS) {
+      this.districtsById.set(district.id, district);
+
+      for (const neighborhood of district.neighborhoods) {
+        this.neighborhoodsById.set(neighborhood.id, neighborhood);
+
+        for (const street of neighborhood.streets) {
+          this.streetsById.set(street.id, street);
+
+          for (const building of street.buildings) {
+            this.buildingsById.set(building.id, building);
+
+            for (const floor of building.floors) {
+              for (const room of floor.rooms) {
+                this.roomsById.set(room.id, room);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 2. Index Environmental Signs by District
+    for (const sign of ENVIRONMENTAL_SIGNS) {
+      const existing = this.signsByDistrict.get(sign.districtId) || [];
+      existing.push(sign);
+      this.signsByDistrict.set(sign.districtId, existing);
+    }
+
+    this.isInitialized = true;
+  }
+
   /**
    * Retrieves all districts
    */
@@ -19,44 +69,39 @@ export class WorldEngine {
   }
 
   /**
-   * Retrieves a single district by its ID
+   * Retrieves a single district by its ID (O(1) lookup)
    */
   public static getDistrictById(districtId: DistrictId): DistrictData | undefined {
-    return WORLD_DISTRICTS.find((d) => d.id === districtId);
+    this.initializeIndices();
+    return this.districtsById.get(districtId) || WORLD_DISTRICTS.find((d) => d.id === districtId);
   }
 
   /**
-   * Retrieves all buildings across all districts or filtered by district
+   * Retrieves all buildings or filtered by district
    */
   public static getBuildings(districtId?: DistrictId): BuildingData[] {
-    const districts = districtId
-      ? WORLD_DISTRICTS.filter((d) => d.id === districtId)
-      : WORLD_DISTRICTS;
+    this.initializeIndices();
+    if (!districtId) {
+      return Array.from(this.buildingsById.values());
+    }
+    const district = this.getDistrictById(districtId);
+    if (!district) return [];
 
     const buildings: BuildingData[] = [];
-    districts.forEach((d) => {
-      d.neighborhoods.forEach((nh) => {
-        nh.streets.forEach((st) => {
-          buildings.push(...st.buildings);
-        });
+    district.neighborhoods.forEach((nh) => {
+      nh.streets.forEach((st) => {
+        buildings.push(...st.buildings);
       });
     });
     return buildings;
   }
 
   /**
-   * Finds a building by its ID
+   * Finds a building by its ID (O(1) lookup)
    */
   public static getBuildingById(buildingId: string): BuildingData | undefined {
-    for (const district of WORLD_DISTRICTS) {
-      for (const neighborhood of district.neighborhoods) {
-        for (const street of neighborhood.streets) {
-          const match = street.buildings.find((b) => b.id === buildingId);
-          if (match) return match;
-        }
-      }
-    }
-    return undefined;
+    this.initializeIndices();
+    return this.buildingsById.get(buildingId);
   }
 
   /**
@@ -74,18 +119,36 @@ export class WorldEngine {
   }
 
   /**
-   * Finds all signs for a district (both street level and inside buildings)
+   * Finds a room by ID (O(1) lookup)
    */
-  public static getSignsForDistrict(districtId: DistrictId): CitySign[] {
-    return ENVIRONMENTAL_SIGNS.filter((s) => s.districtId === districtId);
+  public static getRoomById(roomId: string): RoomData | undefined {
+    this.initializeIndices();
+    return this.roomsById.get(roomId);
   }
 
   /**
-   * Converts all modular BuildingData records into unified CityLocation objects
+   * Finds all signs for a district (O(1) lookup)
    */
-  public static getCityLocations(districtId?: DistrictId): import("../../types").CityLocation[] {
+  public static getSignsForDistrict(districtId: DistrictId): CitySign[] {
+    this.initializeIndices();
+    return this.signsByDistrict.get(districtId) || [];
+  }
+
+  /**
+   * Converts all modular BuildingData records into unified CityLocation objects with caching
+   */
+  public static getCityLocations(districtId?: DistrictId): CityLocation[] {
+    this.initializeIndices();
+
+    if (districtId) {
+      const cached = this.locationsByDistrict.get(districtId);
+      if (cached) return cached;
+    } else if (this.allLocationsCache) {
+      return this.allLocationsCache;
+    }
+
     const buildings = this.getBuildings(districtId);
-    return buildings.map((b) => {
+    const locations: CityLocation[] = buildings.map((b) => {
       const allObjects: InteractiveObject[] = [];
       const npcIds: string[] = [];
 
@@ -115,5 +178,13 @@ export class WorldEngine {
         interiorTheme: b.templateType,
       };
     });
+
+    if (districtId) {
+      this.locationsByDistrict.set(districtId, locations);
+    } else {
+      this.allLocationsCache = locations;
+    }
+
+    return locations;
   }
 }

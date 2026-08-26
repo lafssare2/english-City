@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { PlayerProfile } from "../types";
 import { sound, speakText } from "../utils/audioSynthesizer";
+import { apiPost } from "../lib/apiClient";
 import {
   Bot,
   X,
@@ -67,23 +68,25 @@ export const AITutorDrawer: React.FC<AITutorDrawerProps> = ({ player, onClose })
     setIsLoading(true);
 
     try {
-      const res = await fetch("/api/ai/tutor", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          playerQuery: query,
-          player,
-          recentContext: { level: player.level, supportLanguage: player.supportLanguage },
-        }),
+      const data = await apiPost<{
+        answer?: string;
+        explanation?: string;
+        arabicSummary?: string;
+        examples?: any[];
+        grammarTip?: string;
+        suggestedPractice?: string;
+      }>("/api/ai/tutor", {
+        playerQuery: query,
+        player,
+        recentContext: { level: player.level, supportLanguage: player.supportLanguage },
       });
 
-      const data = await res.json();
       const tutorMsg: TutorMessage = {
         id: `tut_reply_${Date.now()}`,
         sender: "tutor",
-        text: data.answer || "Here is a helpful tip on that topic!",
+        text: data.answer || data.explanation || "Here is a helpful tip on that topic!",
         arabicSummary: data.arabicSummary,
-        examples: data.examples,
+        examples: (data.examples || []).map((ex) => typeof ex === "string" ? ex : `${ex.english} (${ex.translation})`),
         grammarTip: data.grammarTip,
         suggestedPractice: data.suggestedPractice,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),

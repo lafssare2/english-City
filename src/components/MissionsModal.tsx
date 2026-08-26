@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Mission, PlayerProfile, CEFRLevel } from "../types";
 import { INITIAL_MISSIONS } from "../data/initialData";
 import { sound } from "../utils/audioSynthesizer";
+import { apiPost } from "../lib/apiClient";
 import {
   Sparkles,
   X,
@@ -49,17 +50,20 @@ export const MissionsModal: React.FC<MissionsModalProps> = ({
     setIsGenerating(true);
 
     try {
-      const res = await fetch("/api/ai/dynamic-mission", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          player,
-          weakSkills: ["Polite Requests", "Past Tense", "Cafe Ordering"],
-          targetDistrict: player.currentDistrictId,
-        }),
+      const data = await apiPost<{
+        id?: string;
+        title?: string;
+        level?: any;
+        description?: string;
+        objectives?: any[];
+        targetVocabulary?: string[];
+        xpReward?: number;
+        coinReward?: number;
+      }>("/api/ai/dynamic-mission", {
+        player,
+        weakSkills: ["Polite Requests", "Past Tense", "Cafe Ordering"],
+        targetDistrict: player.currentDistrictId,
       });
-
-      const data = await res.json();
       const newMission: Mission = {
         id: data.id || `dyn_${Date.now()}`,
         title: data.title || "Custom English Immersion Challenge",

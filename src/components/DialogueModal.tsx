@@ -12,6 +12,7 @@ import {
 import { sound } from "../utils/audioSynthesizer";
 import { voiceRecognitionService, voiceTTSService } from "../services/voice/TextToSpeechService";
 import { FirestoreService } from "../services/db/FirestoreService";
+import { apiPost } from "../lib/apiClient";
 import confetti from "canvas-confetti";
 import {
   Mic,
@@ -184,22 +185,16 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
     setIsLoadingAi(true);
 
     try {
-      const response = await fetch("/api/ai/npc-chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          npc,
-          player,
-          conversationHistory: newMessages.map((m) => ({ speaker: m.speakerName, text: m.text })),
-          playerMessage: text,
-          activeMission,
-          memories: npcMemories.map((m) => ({ summary: m.summary, importance: m.importance })),
-          location: currentLocation,
-          timeOfDay,
-        }),
+      const data = await apiPost("/api/ai/npc-chat", {
+        npc,
+        player,
+        conversationHistory: newMessages.map((m) => ({ speaker: m.speakerName, text: m.text })),
+        playerMessage: text,
+        activeMission,
+        memories: npcMemories.map((m) => ({ summary: m.summary, importance: m.importance })),
+        location: currentLocation,
+        timeOfDay,
       });
-
-      const data = await response.json();
 
       const npcMsg: DialogueMessage = {
         id: `msg_npc_${Date.now()}`,
@@ -264,20 +259,14 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
         });
 
         // Server-side persistent telemetry update
-        fetch("/api/player/telemetry-update", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            currentScores: player.skillScores,
-            interaction: {
-              dialogueFluency: data.evaluation.fluencyScore,
-              dialogueGrammar: data.evaluation.grammarScore,
-              vocabularyUsedCount: (data.discoveredVocabulary || []).length,
-              speakingDurationSec: 15,
-            },
-          }),
+        apiPost("/api/player/telemetry-update", {
+          interaction: {
+            dialogueFluency: data.evaluation.fluencyScore,
+            dialogueGrammar: data.evaluation.grammarScore,
+            vocabularyUsedCount: (data.discoveredVocabulary || []).length,
+            speakingDurationSec: 15,
+          },
         })
-          .then((r) => r.json())
           .then((res) => {
             if (res.success && res.updatedScores) {
               onUpdatePlayer((prev) => ({
@@ -286,6 +275,7 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
                 overallScore: Math.round(
                   ((Object.values(res.updatedScores) as number[]).reduce((a, b) => a + b, 0) || 0) / 7
                 ),
+                cefrLevel: res.calculatedCEFR || prev.cefrLevel,
               }));
             }
           })
@@ -309,8 +299,8 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
         ...prev,
         totalConversations: prev.totalConversations + 1,
         totalSpeakingSeconds: prev.totalSpeakingSeconds + 15,
-        xp: prev.xp + 40,
-        coins: prev.coins + 15,
+        xp: prev.xp + 25,
+        coins: prev.coins + 5,
       }));
     } catch (err) {
       console.error("Error chatting with NPC:", err);
@@ -412,21 +402,17 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
 
     // Auto-extract long-term memories in background
     if (messages.length >= 3) {
-      fetch("/api/player/extract-memories", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          npcName: npc.name,
-          history: messages.map((m) => ({ speaker: m.speakerName, text: m.text })),
-        }),
+      apiPost("/api/player/extract-memories", {
+        npcId: npc.id,
+        npcName: npc.name,
+        history: messages.map((m) => ({ speaker: m.speakerName, text: m.text })),
       })
-        .then((r) => r.json())
         .then((res) => {
           if (res.extractedMemories && res.extractedMemories.length > 0) {
             const userId = player.userId || player.id || "guest";
             res.extractedMemories.forEach((mem: any) => {
               const memoryObj: NPCMemory = {
-                id: `mem_${npc.id}_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+                id: mem.id || `mem_${npc.id}_${Date.now()}_${Math.random().toString(36).substring(7)}`,
                 npcId: npc.id,
                 userId,
                 memoryType: mem.memoryType || "personal_fact",
@@ -434,7 +420,7 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
                 importance: mem.importance || 5,
                 confidence: mem.confidence || 0.9,
                 emotionalTone: mem.emotionalTone || "positive",
-                createdAt: new Date().toISOString(),
+                createdAt: mem.createdAt || new Date().toISOString(),
               };
               FirestoreService.saveNPCMemory(userId, memoryObj);
             });

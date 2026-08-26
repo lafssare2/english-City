@@ -25,7 +25,6 @@ import {
   Lightbulb,
   AlertTriangle,
   Train,
-  Car,
 } from "lucide-react";
 
 interface CityCanvasProps {
@@ -42,9 +41,8 @@ interface CityCanvasProps {
   onOpenTransit?: () => void;
 }
 
-interface Pedestrian {
+interface SimulationPedestrian {
   id: string;
-  name: string;
   x: number;
   y: number;
   targetX: number;
@@ -52,12 +50,11 @@ interface Pedestrian {
   speed: number;
   emoji: string;
   thoughtBubble: string;
-  color: string;
 }
 
-interface Vehicle {
+interface SimulationVehicle {
   id: string;
-  type: "car" | "taxi" | "bus";
+  type: "taxi" | "car" | "bus";
   x: number;
   y: number;
   direction: "left" | "right";
@@ -79,68 +76,46 @@ export const CityCanvas: React.FC<CityCanvasProps> = ({
   onOpenTransit,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const simCanvasRef = useRef<HTMLCanvasElement>(null);
 
   // Player position in 2D coordinate space (0-1000)
   const [playerPos, setPlayerPos] = useState({ x: 500, y: 500 });
   const [playerFacing, setPlayerFacing] = useState<"left" | "right">("right");
   const [isMoving, setIsMoving] = useState(false);
 
-  // Pedestrians & Vehicles state for dynamic city life
-  const [pedestrians, setPedestrians] = useState<Pedestrian[]>([
-    {
-      id: "ped_1",
-      name: "City Resident",
-      x: 300,
-      y: 420,
-      targetX: 700,
-      targetY: 420,
-      speed: 0.8,
-      emoji: "🚶",
-      thoughtBubble: "Need a hot latte...",
-      color: "#3b82f6",
-    },
-    {
-      id: "ped_2",
-      name: "Tourist",
-      x: 650,
-      y: 460,
-      targetX: 250,
-      targetY: 460,
-      speed: 0.6,
-      emoji: "🚶‍♀️",
-      thoughtBubble: "Where is the museum?",
-      color: "#ec4899",
-    },
-    {
-      id: "ped_3",
-      name: "Student",
-      x: 450,
-      y: 360,
-      targetX: 850,
-      targetY: 360,
-      speed: 1.1,
-      emoji: "🏃",
-      thoughtBubble: "Late for lecture!",
-      color: "#10b981",
-    },
-  ]);
+  // Real-time Simulation State stored in Refs to eliminate 60 FPS React re-renders
+  const simulationState = useRef<{
+    pedestrians: SimulationPedestrian[];
+    vehicles: SimulationVehicle[];
+    trafficLight: "green" | "yellow" | "red";
+    lastLightSwitch: number;
+    rainParticles: { x: number; y: number; speed: number; len: number }[];
+  }>({
+    pedestrians: [
+      { id: "p1", x: 300, y: 420, targetX: 700, targetY: 420, speed: 0.8, emoji: "🚶", thoughtBubble: "Need a hot latte..." },
+      { id: "p2", x: 650, y: 460, targetX: 250, targetY: 460, speed: 0.6, emoji: "🚶‍♀️", thoughtBubble: "Where is the museum?" },
+      { id: "p3", x: 450, y: 360, targetX: 850, targetY: 360, speed: 1.1, emoji: "🏃", thoughtBubble: "Late for meeting!" },
+      { id: "p4", x: 200, y: 440, targetX: 600, targetY: 440, speed: 0.7, emoji: "🚶‍♂️", thoughtBubble: "Practicing English." },
+    ],
+    vehicles: [
+      { id: "v1", type: "taxi", x: 100, y: 530, direction: "right", speed: 2.4, color: "#eab308" },
+      { id: "v2", type: "car", x: 900, y: 570, direction: "left", speed: 2.8, color: "#ef4444" },
+      { id: "v3", type: "bus", x: 400, y: 530, direction: "right", speed: 1.6, color: "#3b82f6" },
+    ],
+    trafficLight: "green",
+    lastLightSwitch: Date.now(),
+    rainParticles: Array.from({ length: 45 }, () => ({
+      x: Math.random() * 1000,
+      y: Math.random() * 1000,
+      speed: 12 + Math.random() * 8,
+      len: 10 + Math.random() * 15,
+    })),
+  });
 
-  const [vehicles, setVehicles] = useState<Vehicle[]>([
-    { id: "veh_1", type: "taxi", x: 100, y: 530, direction: "right", speed: 2.2, color: "#eab308" },
-    { id: "veh_2", type: "car", x: 900, y: 570, direction: "left", speed: 2.5, color: "#ef4444" },
-    { id: "veh_3", type: "bus", x: 400, y: 530, direction: "right", speed: 1.4, color: "#3b82f6" },
-  ]);
-
-  const [trafficLight, setTrafficLight] = useState<"green" | "yellow" | "red">("green");
-
-  // Filter locations and NPCs belonging to current district
-  const districtLocations = CITY_LOCATIONS.filter(
-    (loc) => loc.districtId === currentDistrictId
-  );
+  // Fast O(1) indexed lookups
+  const districtLocations = WorldEngine.getCityLocations(currentDistrictId);
   const districtNpcs = NPCS.filter((npc) => npc.districtId === currentDistrictId);
   const districtInfo = DISTRICTS.find((d) => d.id === currentDistrictId) || DISTRICTS[0];
-
-  // Living City Engine queries
   const districtSigns = WorldEngine.getSignsForDistrict(currentDistrictId);
   const availableEvents = CityEventEngine.getAvailableEvents(
     CITY_EVENTS,
@@ -157,67 +132,143 @@ export const CityCanvas: React.FC<CityCanvasProps> = ({
     }
   }, [currentDistrictId, currentLocationId]);
 
-  // Traffic light cycle simulation
+  // High-performance 60 FPS Canvas Simulation Loop (Zero React State Overheads)
   useEffect(() => {
-    const interval = setInterval(() => {
-      setTrafficLight((prev) => {
-        if (prev === "green") return "yellow";
-        if (prev === "yellow") return "red";
-        return "green";
-      });
-    }, 6000);
-    return () => clearInterval(interval);
-  }, []);
+    let animId: number;
+    const canvas = simCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
 
-  // Continuous animation loop for vehicles and pedestrians
-  useEffect(() => {
-    let animationFrameId: number;
+    const renderSimulation = () => {
+      const now = Date.now();
+      const state = simulationState.current;
 
-    const animate = () => {
-      // Move vehicles
-      setVehicles((prev) =>
-        prev.map((veh) => {
-          let newX = veh.direction === "right" ? veh.x + veh.speed : veh.x - veh.speed;
-          if (trafficLight === "red" && newX > 450 && newX < 550) {
-            // Stop at red light
-            return veh;
+      // Traffic Light State Machine
+      if (now - state.lastLightSwitch > 6000) {
+        state.trafficLight = state.trafficLight === "green" ? "yellow" : state.trafficLight === "yellow" ? "red" : "green";
+        state.lastLightSwitch = now;
+      }
+
+      ctx.clearRect(0, 0, 1000, 1000);
+
+      // 1. Render & Update Vehicles
+      for (const veh of state.vehicles) {
+        let newX = veh.direction === "right" ? veh.x + veh.speed : veh.x - veh.speed;
+        if (state.trafficLight === "red" && newX > 450 && newX < 550) {
+          // Stopped at light
+        } else {
+          veh.x = newX;
+        }
+
+        if (veh.direction === "right" && veh.x > 1050) veh.x = -100;
+        if (veh.direction === "left" && veh.x < -100) veh.x = 1050;
+
+        // Draw vehicle body
+        ctx.save();
+        ctx.fillStyle = veh.color;
+        ctx.shadowColor = "rgba(0,0,0,0.5)";
+        ctx.shadowBlur = 8;
+        ctx.beginPath();
+        ctx.roundRect(veh.x - 28, veh.y - 12, 56, 24, 6);
+        ctx.fill();
+
+        // Draw Vehicle Label / Emoji
+        ctx.shadowBlur = 0;
+        ctx.font = "14px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(veh.type === "taxi" ? "🚕" : veh.type === "bus" ? "🚌" : "🚗", veh.x, veh.y);
+
+        // Headlight beam at night
+        if (timeOfDay === "night" || timeOfDay === "evening") {
+          const grad = ctx.createLinearGradient(
+            veh.direction === "right" ? veh.x + 28 : veh.x - 28,
+            veh.y,
+            veh.direction === "right" ? veh.x + 100 : veh.x - 100,
+            veh.y
+          );
+          grad.addColorStop(0, "rgba(254, 240, 138, 0.35)");
+          grad.addColorStop(1, "rgba(254, 240, 138, 0)");
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          if (veh.direction === "right") {
+            ctx.moveTo(veh.x + 28, veh.y - 8);
+            ctx.lineTo(veh.x + 100, veh.y - 20);
+            ctx.lineTo(veh.x + 100, veh.y + 20);
+            ctx.lineTo(veh.x + 28, veh.y + 8);
+          } else {
+            ctx.moveTo(veh.x - 28, veh.y - 8);
+            ctx.lineTo(veh.x - 100, veh.y - 20);
+            ctx.lineTo(veh.x - 100, veh.y + 20);
+            ctx.lineTo(veh.x - 28, veh.y + 8);
           }
-          if (veh.direction === "right" && newX > 1050) newX = -100;
-          if (veh.direction === "left" && newX < -100) newX = 1050;
-          return { ...veh, x: newX };
-        })
-      );
+          ctx.fill();
+        }
+        ctx.restore();
+      }
 
-      // Move pedestrians
-      setPedestrians((prev) =>
-        prev.map((ped) => {
-          const dx = ped.targetX - ped.x;
-          const dy = ped.targetY - ped.y;
-          const dist = Math.sqrt(dx * dx + dy * dy);
+      // 2. Render & Update Pedestrians
+      for (const ped of state.pedestrians) {
+        const dx = ped.targetX - ped.x;
+        const dy = ped.targetY - ped.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
 
-          if (dist < 5) {
-            // Pick new target patrol point
-            return {
-              ...ped,
-              targetX: 150 + Math.random() * 700,
-              targetY: 340 + Math.random() * 140,
-            };
+        if (dist < 8) {
+          ped.targetX = 150 + Math.random() * 700;
+          ped.targetY = 340 + Math.random() * 140;
+        } else {
+          ped.x += (dx / dist) * ped.speed;
+          ped.y += (dy / dist) * ped.speed;
+        }
+
+        ctx.save();
+        // Thought bubble
+        ctx.font = "9px sans-serif";
+        ctx.textAlign = "center";
+        const bubbleW = ctx.measureText(ped.thoughtBubble).width + 8;
+        ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
+        ctx.beginPath();
+        ctx.roundRect(ped.x - bubbleW / 2, ped.y - 28, bubbleW, 14, 4);
+        ctx.fill();
+
+        ctx.fillStyle = "#cbd5e1";
+        ctx.fillText(ped.thoughtBubble, ped.x, ped.y - 18);
+
+        // Emoji Avatar
+        ctx.font = "18px sans-serif";
+        ctx.textBaseline = "middle";
+        ctx.fillText(ped.emoji, ped.x, ped.y);
+        ctx.restore();
+      }
+
+      // 3. Render Rain Particles if raining
+      if (weather === "rainy") {
+        ctx.save();
+        ctx.strokeStyle = "rgba(96, 165, 250, 0.5)";
+        ctx.lineWidth = 1.5;
+        for (const drop of state.rainParticles) {
+          ctx.beginPath();
+          ctx.moveTo(drop.x, drop.y);
+          ctx.lineTo(drop.x - 2, drop.y + drop.len);
+          ctx.stroke();
+
+          drop.y += drop.speed;
+          drop.x -= 1;
+          if (drop.y > 1000) {
+            drop.y = -20;
+            drop.x = Math.random() * 1000;
           }
+        }
+        ctx.restore();
+      }
 
-          return {
-            ...ped,
-            x: ped.x + (dx / dist) * ped.speed,
-            y: ped.y + (dy / dist) * ped.speed,
-          };
-        })
-      );
-
-      animationFrameId = requestAnimationFrame(animate);
+      animId = requestAnimationFrame(renderSimulation);
     };
 
-    animationFrameId = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(animationFrameId);
-  }, [trafficLight]);
+    animId = requestAnimationFrame(renderSimulation);
+    return () => cancelAnimationFrame(animId);
+  }, [timeOfDay, weather]);
 
   // Keyboard navigation (WASD & Arrows)
   const handleKeyDown = useCallback(
@@ -299,219 +350,118 @@ export const CityCanvas: React.FC<CityCanvasProps> = ({
       case "evening":
         return "from-amber-900/30 via-indigo-950/40 to-slate-950/60";
       case "night":
-        return "from-blue-950/60 via-slate-950/80 to-slate-950/90";
+        return "from-indigo-950/70 via-slate-950/80 to-slate-950/95";
+      default:
+        return "from-transparent to-transparent";
     }
   };
 
   return (
     <main
+      id="city-canvas-container"
       ref={containerRef}
       onClick={handleCanvasClick}
-      className="relative w-full h-screen overflow-hidden bg-slate-950 select-none cursor-crosshair"
+      className="relative w-full h-full overflow-hidden bg-slate-950 cursor-crosshair select-none"
     >
-      {/* 1. Base City Ground & Roads Background */}
-      <div className="absolute inset-0 bg-[#0c1222] bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:28px_28px]">
-        {/* District Ambient Header Watermark */}
-        <div className="absolute top-24 left-6 pointer-events-none opacity-20 flex flex-col">
-          <span className="font-display font-black text-4xl sm:text-6xl tracking-tight text-white uppercase">
-            {districtInfo.name}
-          </span>
-          <span className="text-xl sm:text-2xl font-arabic text-amber-300">
-            {districtInfo.arabicName}
-          </span>
-        </div>
+      {/* 1. Procedural Vector Street Grid & District Layout */}
+      <div className="absolute inset-0 opacity-20 pointer-events-none">
+        <svg className="w-full h-full" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <pattern id="city-grid" width="80" height="80" patternUnits="userSpaceOnUse">
+              <path d="M 80 0 L 0 0 0 80" fill="none" stroke="#64748b" strokeWidth="1" strokeDasharray="4 4" />
+            </pattern>
+          </defs>
+          <rect width="100%" height="100%" fill="url(#city-grid)" />
+        </svg>
+      </div>
 
-        {/* Sidewalks & Plazas */}
-        <div className="absolute top-[280px] left-0 right-0 h-[220px] bg-slate-900/90 border-y-2 border-slate-700/60 shadow-inner" />
+      {/* 2. Main Avenue & Cross Streets */}
+      <div className="absolute top-[500px] left-0 right-0 h-32 bg-slate-900/90 border-y-4 border-slate-700 pointer-events-none">
+        {/* Road center dashed line */}
+        <div className="absolute top-1/2 left-0 right-0 -translate-y-1/2 border-t-2 border-dashed border-amber-400/60" />
+      </div>
+      <div className="absolute top-0 bottom-0 left-[480px] w-28 bg-slate-900/90 border-x-4 border-slate-700 pointer-events-none">
+        <div className="absolute top-0 bottom-0 left-1/2 -translate-x-1/2 border-l-2 border-dashed border-slate-500/50" />
+      </div>
 
-        {/* Main 2-Lane Avenue Road */}
-        <div className="absolute top-[500px] left-0 right-0 h-[150px] bg-slate-950 border-y-4 border-amber-500/40 flex flex-col justify-center">
-          {/* Dashed Center Road Divider */}
-          <div className="w-full h-1 border-t-2 border-dashed border-amber-400/60" />
-
-          {/* Crosswalk Zebra Stripes */}
-          <div className="absolute left-[480px] top-0 bottom-0 w-20 flex justify-between">
-            {[...Array(6)].map((_, i) => (
-              <div key={i} className="h-full w-2 bg-slate-100/40" />
-            ))}
-          </div>
-        </div>
-
-        {/* Lower Promenade Sidewalk */}
-        <div className="absolute top-[650px] left-0 right-0 h-[140px] bg-slate-900/90 border-b-2 border-slate-700/60" />
-
-        {/* Traffic Light Pole at Crosswalk */}
-        <div className="absolute left-[470px] top-[460px] flex flex-col items-center pointer-events-none z-10">
-          <div className="w-1.5 h-12 bg-slate-700" />
-          <div className="bg-slate-900 border border-slate-700 rounded-md p-1 flex flex-col gap-1 shadow-lg">
-            <div
-              className={`w-2.5 h-2.5 rounded-full ${
-                trafficLight === "red" ? "bg-red-500 shadow-lg shadow-red-500" : "bg-red-950"
-              }`}
-            />
-            <div
-              className={`w-2.5 h-2.5 rounded-full ${
-                trafficLight === "yellow"
-                  ? "bg-amber-400 shadow-lg shadow-amber-400"
-                  : "bg-amber-950"
-              }`}
-            />
-            <div
-              className={`w-2.5 h-2.5 rounded-full ${
-                trafficLight === "green"
-                  ? "bg-emerald-500 shadow-lg shadow-emerald-500"
-                  : "bg-emerald-950"
-              }`}
-            />
+      {/* 3. District Header Banner */}
+      <div className="absolute top-20 left-6 z-20 pointer-events-none">
+        <div className="flex items-center gap-3 bg-slate-900/90 backdrop-blur-md border border-slate-700 px-4 py-2 rounded-2xl shadow-2xl">
+          <span className="text-xl">🏙️</span>
+          <div className="flex flex-col">
+            <h1 className="text-sm font-bold font-display text-white tracking-wide flex items-center gap-2">
+              {districtInfo.name}
+              <span className="text-[10px] bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded-full border border-blue-500/30">
+                Min Level: {districtInfo.minLevel}
+              </span>
+            </h1>
+            <p className="text-[11px] text-slate-400">{districtInfo.description}</p>
           </div>
         </div>
       </div>
 
-      {/* 2. District Buildings / Portals */}
+      {/* 4. Interactive Buildings & POIs */}
       {districtLocations.map((loc) => {
-        const isHovered = nearestLocation?.id === loc.id;
+        const isNearby =
+          Math.sqrt(
+            Math.pow(loc.canvasX - playerPos.x, 2) + Math.pow(loc.canvasY - playerPos.y, 2)
+          ) < 130;
+
         return (
           <div
             key={loc.id}
+            id={`loc-${loc.id}`}
             onClick={(e) => {
               e.stopPropagation();
               sound.playClick();
               onEnterLocation(loc);
             }}
-            className="absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer group z-10 transition-transform duration-300 hover:scale-105"
+            className={`absolute -translate-x-1/2 -translate-y-1/2 z-10 cursor-pointer group transition-transform ${
+              isNearby ? "scale-105" : "hover:scale-102"
+            }`}
             style={{
               left: `${loc.canvasX / 10}%`,
               top: `${loc.canvasY / 10}%`,
             }}
           >
-            {/* Building Exterior Card */}
-            <div
-              className={`relative bg-gradient-to-b ${loc.color} border-2 ${
-                isHovered
-                  ? "border-amber-400 shadow-2xl shadow-amber-500/30 scale-105"
-                  : "border-slate-700/80 shadow-xl"
-              } rounded-3xl p-4 w-44 sm:w-56 text-slate-100 flex flex-col items-center text-center transition-all`}
-            >
-              {/* Roof Landmark Badge */}
-              <div className="absolute -top-3 px-3 py-0.5 rounded-full bg-slate-900 border border-slate-700 text-[10px] font-bold text-amber-300 uppercase tracking-widest flex items-center gap-1 shadow-md">
-                <Sparkles className="w-2.5 h-2.5 text-amber-400" />
-                {loc.category}
-              </div>
-
-              {/* Building Title & Icon */}
-              <div className="w-12 h-12 rounded-2xl bg-white/10 backdrop-blur-md flex items-center justify-center my-1.5 shadow-inner">
-                <span className="text-2xl">
-                  {loc.category === "cafe"
-                    ? "☕"
-                    : loc.category === "airport"
-                    ? "✈️"
-                    : loc.category === "hospital"
-                    ? "🏥"
-                    : loc.category === "office"
-                    ? "🏢"
-                    : loc.category === "home"
-                    ? "🏡"
-                    : loc.category === "store"
-                    ? "🛍️"
-                    : loc.category === "hotel"
-                    ? "🏨"
-                    : loc.category === "subway"
-                    ? "🚇"
-                    : "🏛️"}
+            <div className="relative flex flex-col items-center">
+              <div
+                className={`w-24 h-24 sm:w-28 sm:h-28 rounded-3xl p-3 shadow-2xl border-2 flex flex-col items-center justify-between transition-all ${
+                  isNearby
+                    ? "border-amber-400 ring-4 ring-amber-400/30 bg-slate-900"
+                    : "border-slate-700 bg-slate-900/95 group-hover:border-slate-500"
+                }`}
+                style={{ backgroundColor: `${loc.color}15` }}
+              >
+                <div className="w-full flex items-center justify-between">
+                  <span className="text-2xl">{loc.icon}</span>
+                  {isNearby && (
+                    <span className="animate-ping w-2.5 h-2.5 rounded-full bg-amber-400" />
+                  )}
+                </div>
+                <span className="text-[11px] font-bold text-center text-slate-200 line-clamp-1">
+                  {loc.name}
                 </span>
-              </div>
-
-              <h3 className="font-display font-bold text-xs sm:text-sm text-white tracking-tight leading-tight line-clamp-1">
-                {loc.name}
-              </h3>
-              <p className="text-[10px] text-slate-200/80 mt-1 line-clamp-2 leading-relaxed">
-                {loc.description}
-              </p>
-
-              {/* Entrance Door Button */}
-              <div className="mt-2.5 flex items-center gap-1 bg-slate-950/70 hover:bg-slate-950 border border-white/10 px-3 py-1 rounded-xl text-[11px] font-semibold text-amber-300 transition-colors">
-                <DoorOpen className="w-3.5 h-3.5" />
-                <span>Enter Location</span>
+                <div className="w-full flex items-center justify-center gap-1 text-[9px] text-slate-400 bg-slate-800/80 rounded-md py-0.5">
+                  <DoorOpen className="w-2.5 h-2.5" />
+                  <span>Enter</span>
+                </div>
               </div>
             </div>
           </div>
         );
       })}
 
-      {/* 3. Stationed District NPCs */}
-      {districtNpcs.map((npc) => {
-        const isNear = nearestNpc?.id === npc.id;
-        const loc = districtLocations.find((l) => l.id === npc.locationId);
-        const npcX = (loc ? loc.canvasX + 45 : 500) / 10;
-        const npcY = (loc ? loc.canvasY + 65 : 400) / 10;
+      {/* 4.5. High Performance Real-Time Canvas Simulation Layer */}
+      <canvas
+        id="city-sim-canvas"
+        ref={simCanvasRef}
+        width={1000}
+        height={1000}
+        className="absolute inset-0 w-full h-full pointer-events-none z-15"
+      />
 
-        return (
-          <div
-            key={npc.id}
-            onClick={(e) => {
-              e.stopPropagation();
-              sound.playClick();
-              onSelectNpc(npc);
-            }}
-            className="absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer z-20 group"
-            style={{
-              left: `${npcX}%`,
-              top: `${npcY}%`,
-            }}
-          >
-            {/* Animated Speech/Mood Bubble */}
-            <div className="absolute -top-12 left-1/2 -translate-x-1/2 bg-slate-900/95 border border-amber-500/40 text-slate-100 px-2.5 py-1 rounded-xl shadow-xl whitespace-nowrap text-[10px] font-medium flex items-center gap-1.5 animate-bounce">
-              <MessageSquare className="w-3 h-3 text-amber-400" />
-              <span>{npc.name.split(" ")[0]}: "Talk with me!"</span>
-            </div>
-
-            {/* NPC Body */}
-            <div
-              className={`w-11 h-11 rounded-2xl flex items-center justify-center text-2xl shadow-xl transition-all ${
-                isNear
-                  ? "ring-4 ring-amber-400 scale-110 shadow-amber-500/40"
-                  : "ring-2 ring-white/20 group-hover:scale-105"
-              }`}
-              style={{ backgroundColor: npc.avatarColor }}
-            >
-              {npc.avatarEmoji}
-            </div>
-
-            {/* Nameplate */}
-            <div className="mt-1 px-2 py-0.5 rounded-md bg-slate-950/80 text-[10px] font-bold text-center text-slate-200 border border-slate-800">
-              {npc.name.split(" ")[0]}
-            </div>
-          </div>
-        );
-      })}
-
-      {/* 4. Dynamic Moving Vehicles */}
-      {vehicles.map((veh) => (
-        <div
-          key={veh.id}
-          className="absolute -translate-y-1/2 z-10 transition-transform pointer-events-none"
-          style={{
-            left: `${veh.x / 10}%`,
-            top: `${veh.y / 10}%`,
-            transform: veh.direction === "left" ? "scaleX(-1)" : "scaleX(1)",
-          }}
-        >
-          <div
-            className="relative px-3 py-1.5 rounded-xl border border-slate-700 shadow-xl flex items-center gap-1"
-            style={{ backgroundColor: veh.color }}
-          >
-            {/* Headlights beam at night */}
-            {(timeOfDay === "night" || timeOfDay === "evening") && (
-              <div className="absolute right-0 top-1/2 -translate-y-1/2 w-24 h-8 bg-gradient-to-r from-amber-200/40 to-transparent blur-sm -mr-24 pointer-events-none" />
-            )}
-            <span className="text-xl">
-              {veh.type === "taxi" ? "🚕" : veh.type === "bus" ? "🚌" : "🚗"}
-            </span>
-          </div>
-        </div>
-      ))}
-
-      {/* 4.5. Environmental Street Signs on Sidewalk */}
+      {/* 4.6. Environmental Street Signs */}
       {districtSigns.map((sign, idx) => (
         <div
           key={sign.id}
@@ -536,7 +486,7 @@ export const CityCanvas: React.FC<CityCanvasProps> = ({
         </div>
       ))}
 
-      {/* 4.6. Dynamic City Event Markers */}
+      {/* 4.7. Dynamic City Event Markers */}
       {availableEvents.slice(0, 1).map((ev) => (
         <div
           key={ev.id}
@@ -561,7 +511,7 @@ export const CityCanvas: React.FC<CityCanvasProps> = ({
         </div>
       ))}
 
-      {/* 4.7. Public Transit Station Entrance */}
+      {/* 4.8. Public Transit Station Entrance */}
       <div
         onClick={(e) => {
           e.stopPropagation();
@@ -580,27 +530,9 @@ export const CityCanvas: React.FC<CityCanvasProps> = ({
         </div>
       </div>
 
-      {/* 5. Walking Civilian Pedestrians */}
-      {pedestrians.map((ped) => (
-        <div
-          key={ped.id}
-          className="absolute -translate-x-1/2 -translate-y-1/2 z-15 pointer-events-none transition-all duration-300"
-          style={{
-            left: `${ped.x / 10}%`,
-            top: `${ped.y / 10}%`,
-          }}
-        >
-          {/* Pedestrian Thought Bubble */}
-          <div className="absolute -top-7 left-1/2 -translate-x-1/2 bg-slate-950/80 border border-slate-800 text-slate-300 px-2 py-0.5 rounded-lg text-[9px] whitespace-nowrap opacity-75">
-            {ped.thoughtBubble}
-          </div>
-          <div className="text-xl">{ped.emoji}</div>
-        </div>
-      ))}
-
-      {/* 6. Player Avatar */}
+      {/* 5. Player Avatar */}
       <div
-        className={`absolute -translate-x-1/2 -translate-y-1/2 z-30 transition-all duration-200 ${
+        className={`absolute -translate-x-1/2 -translate-y-1/2 z-30 transition-all duration-150 ${
           isMoving ? "scale-105" : ""
         }`}
         style={{
@@ -631,7 +563,7 @@ export const CityCanvas: React.FC<CityCanvasProps> = ({
         </div>
       </div>
 
-      {/* 7. Proximity Action Helper Overlay (Press E or Tap) */}
+      {/* 6. Proximity Action Helper Overlay (Press E or Tap) */}
       {(nearestNpc || nearestLocation) && (
         <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-40 bg-slate-900/95 backdrop-blur-md border border-amber-500/40 rounded-2xl px-5 py-2.5 shadow-2xl flex items-center gap-3 animate-fadeIn">
           {nearestNpc ? (
@@ -684,26 +616,12 @@ export const CityCanvas: React.FC<CityCanvasProps> = ({
         </div>
       )}
 
-      {/* 8. Weather & Day/Night Atmosphere Overlay */}
+      {/* 7. Atmosphere Overlay */}
       <div
         className={`absolute inset-0 pointer-events-none bg-gradient-to-b ${getLightingStyle()} transition-all duration-1000`}
       />
 
-      {/* Rainy particles overlay */}
-      {weather === "rainy" && (
-        <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(#60a5fa_1px,transparent_1px)] [background-size:16px_32px] opacity-40 animate-pulse" />
-      )}
-
-      {/* Night Streetlamps Ambient Glows */}
-      {(timeOfDay === "night" || timeOfDay === "evening") && (
-        <div className="absolute inset-0 pointer-events-none">
-          <div className="absolute top-[270px] left-[200px] w-48 h-48 rounded-full bg-amber-400/10 blur-3xl" />
-          <div className="absolute top-[270px] left-[700px] w-48 h-48 rounded-full bg-amber-400/10 blur-3xl" />
-          <div className="absolute top-[640px] left-[450px] w-64 h-64 rounded-full bg-amber-400/10 blur-3xl" />
-        </div>
-      )}
-
-      {/* 9. Mobile Touch Movement Helper / On-screen D-pad */}
+      {/* 8. Mobile Touch Movement Helper */}
       <div className="fixed bottom-6 right-6 z-40 sm:hidden bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-3xl p-2.5 shadow-2xl flex flex-col items-center gap-1.5">
         <button
           onClick={() => {

@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { PlayerProfile } from "../types";
 import { sound, speakText, createSpeechRecognizer } from "../utils/audioSynthesizer";
+import { apiPost } from "../lib/apiClient";
 import confetti from "canvas-confetti";
 import {
   Briefcase,
@@ -122,25 +123,32 @@ export const CareerCenterModal: React.FC<CareerCenterModalProps> = ({
       // Evaluate final interview
       setIsEvaluating(true);
       try {
-        const res = await fetch("/api/ai/interview-evaluator", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            role: activeRole.role,
-            candidateAnswers: [candidateAnswer],
-            playerLevel: player.level,
-          }),
+        const data = await apiPost<{
+          hired?: boolean;
+          fluencyScore?: number;
+          grammarScore?: number;
+          vocabularyScore?: number;
+          professionalVocabScore?: number;
+          strengths?: string[];
+          improvementAreas?: string[];
+          improvements?: string[];
+          arabicFeedback?: string;
+          decisionArabic?: string;
+        }>("/api/ai/interview-evaluator", {
+          jobRole: activeRole.role,
+          companyName: activeRole.company,
+          answersHistory: [candidateAnswer],
+          player,
         });
 
-        const data = await res.json();
         setEvaluationResult({
           hired: data.hired ?? true,
           fluencyScore: data.fluencyScore || 88,
           grammarScore: data.grammarScore || 90,
-          professionalVocabScore: data.professionalVocabScore || 86,
+          professionalVocabScore: data.professionalVocabScore || data.vocabularyScore || 86,
           strengths: data.strengths || ["Articulate phrasing", "Clear polite tone"],
-          improvementAreas: data.improvementAreas || ["Incorporate more industry terminology"],
-          arabicFeedback: data.arabicFeedback || "أداء رائع جداً في المقابلة الوظيفية، ومصطلحات مناسبة للمجال.",
+          improvementAreas: data.improvementAreas || data.improvements || ["Incorporate more industry terminology"],
+          arabicFeedback: data.arabicFeedback || data.decisionArabic || "أداء رائع جداً في المقابلة الوظيفية، ومصطلحات مناسبة للمجال.",
         });
 
         if (data.hired ?? true) {

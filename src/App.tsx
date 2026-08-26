@@ -23,6 +23,7 @@ import { sound, setAudioMuted } from "./utils/audioSynthesizer";
 import { auth } from "./lib/firebase";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { FirestoreService } from "./services/db/FirestoreService";
+import { apiPost } from "./lib/apiClient";
 
 // Sub-components
 import { CityHUD } from "./components/CityHUD";
@@ -259,6 +260,9 @@ export default function App() {
           if (currentUser?.uid) {
             FirestoreService.saveMission(currentUser.uid, updatedMission);
           }
+          if (allDone && !m.rewardClaimed) {
+            handleReward(m.xpReward || 200, m.coinReward || 50);
+          }
           return updatedMission;
         }
         return m;
@@ -266,13 +270,39 @@ export default function App() {
     );
   };
 
-  // Gain XP and Coins reward
+  // Gain XP and Coins reward (calls server if authenticated)
   const handleReward = (xpReward: number, coinReward: number) => {
-    setPlayer((prev) => ({
-      ...prev,
-      xp: prev.xp + xpReward,
-      coins: prev.coins + coinReward,
-    }));
+    if (currentUser?.uid) {
+      apiPost<{ xp: number; level: number; coins: number }>("/api/player/reward-xp", {
+        xp: xpReward,
+        coins: coinReward,
+        reason: "Gameplay objective reward",
+        source: "mission_completion",
+      })
+        .then((res) => {
+          if (res && res.xp !== undefined) {
+            setPlayer((prev) => ({
+              ...prev,
+              xp: res.xp,
+              level: res.level ?? prev.level,
+              coins: res.coins ?? (prev.coins + coinReward),
+            }));
+          }
+        })
+        .catch(() => {
+          setPlayer((prev) => ({
+            ...prev,
+            xp: prev.xp + xpReward,
+            coins: prev.coins + coinReward,
+          }));
+        });
+    } else {
+      setPlayer((prev) => ({
+        ...prev,
+        xp: prev.xp + xpReward,
+        coins: prev.coins + coinReward,
+      }));
+    }
   };
 
   const handleOpenModal = (modalName: any) => {

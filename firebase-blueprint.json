@@ -1,0 +1,142 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile containing identity, progression, and learning preferences",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 60 },
+        "email": { "type": "string", "format": "email", "maxLength": 120 },
+        "avatar": { "type": "string", "maxLength": 100 },
+        "level": { "type": "string", "enum": ["A1", "A2", "B1", "B2", "C1"] },
+        "cefrLevel": { "type": "string", "enum": ["A1", "A2", "B1", "B2", "C1"] },
+        "xp": { "type": "integer" },
+        "coins": { "type": "integer" },
+        "overallScore": { "type": "integer" },
+        "nativeLanguage": { "type": "string", "maxLength": 50 },
+        "supportLanguage": { "type": "string", "maxLength": 50 },
+        "currentDistrictId": { "type": "string", "maxLength": 50 },
+        "currentLocationId": { "type": "string", "maxLength": 50 },
+        "soundEnabled": { "type": "boolean" },
+        "hasCompletedOnboarding": { "type": "boolean" },
+        "totalConversations": { "type": "integer" },
+        "totalSpeakingSeconds": { "type": "integer" },
+        "role": { "type": "string", "enum": ["user", "admin"] },
+        "isAdmin": { "type": "boolean" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["userId", "name", "level"]
+    },
+    "VocabularyCard": {
+      "title": "VocabularyCard",
+      "description": "Spaced repetition flashcard with SM-2 metrics",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "word": { "type": "string", "maxLength": 100 },
+        "phonetic": { "type": "string", "maxLength": 100 },
+        "partOfSpeech": { "type": "string", "maxLength": 40 },
+        "definition": { "type": "string", "maxLength": 500 },
+        "arabicTranslation": { "type": "string", "maxLength": 300 },
+        "example": { "type": "string", "maxLength": 500 },
+        "level": { "type": "string", "enum": ["A1", "A2", "B1", "B2", "C1"] },
+        "mastery": { "type": "integer" },
+        "repetitions": { "type": "integer" },
+        "interval": { "type": "integer" },
+        "easeFactor": { "type": "number" },
+        "lapses": { "type": "integer" },
+        "retentionEstimate": { "type": "number" },
+        "nextReviewDate": { "type": "string" },
+        "timesReviewed": { "type": "integer" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "word", "definition"]
+    },
+    "MissionProgress": {
+      "title": "MissionProgress",
+      "description": "Server-authoritative mission state",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "enum": ["available", "in_progress", "completed"] },
+        "progressPercent": { "type": "integer" },
+        "xpReward": { "type": "integer" },
+        "coinReward": { "type": "integer" },
+        "completedAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "status"]
+    },
+    "NPCMemoryRecord": {
+      "title": "NPCMemoryRecord",
+      "description": "Server-validated episodic NPC memory",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "npcId": { "type": "string", "maxLength": 64 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "memoryType": { "type": "string", "enum": ["preference", "personal_fact", "shared_event", "goal", "opinion"] },
+        "summary": { "type": "string", "maxLength": 500 },
+        "importance": { "type": "integer" },
+        "confidence": { "type": "number" },
+        "savedAt": { "type": "string" }
+      },
+      "required": ["id", "npcId", "userId", "summary", "importance"]
+    },
+    "ConversationSessionRecord": {
+      "title": "ConversationSessionRecord",
+      "description": "Historical dialogue session with an NPC",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "npcId": { "type": "string", "maxLength": 64 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "startedAt": { "type": "string" },
+        "lastMessageAt": { "type": "string" }
+      },
+      "required": ["id", "npcId", "userId"]
+    },
+    "EconomyTransaction": {
+      "title": "EconomyTransaction",
+      "description": "Server-authoritative ledger record for all XP/coin transactions",
+      "type": "object",
+      "properties": {
+        "transactionId": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "type": { "type": "string", "enum": ["xp", "coins", "both"] },
+        "amount": { "type": "integer" },
+        "reason": { "type": "string", "maxLength": 200 },
+        "source": { "type": "string", "maxLength": 100 },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["transactionId", "userId", "type", "amount", "reason"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "UserProfile" },
+      "description": "Player profile document"
+    },
+    "/users/{userId}/vocabulary/{wordId}": {
+      "schema": { "$ref": "VocabularyCard" },
+      "description": "User flashcards with SM-2 telemetry"
+    },
+    "/users/{userId}/missions/{missionId}": {
+      "schema": { "$ref": "MissionProgress" },
+      "description": "Server-authoritative mission records"
+    },
+    "/users/{userId}/npc_memories/{memoryId}": {
+      "schema": { "$ref": "NPCMemoryRecord" },
+      "description": "Extracted NPC memories"
+    },
+    "/users/{userId}/conversations/{npcId}": {
+      "schema": { "$ref": "ConversationSessionRecord" },
+      "description": "Dialogue history sessions"
+    },
+    "/users/{userId}/economy_transactions/{txId}": {
+      "schema": { "$ref": "EconomyTransaction" },
+      "description": "Authoritative currency audit transactions"
+    }
+  }
+}

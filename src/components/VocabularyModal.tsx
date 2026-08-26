@@ -3,6 +3,7 @@ import { VocabularyWord, PlayerProfile, CEFRLevel } from "../types";
 import { sound } from "../utils/audioSynthesizer";
 import { voiceTTSService } from "../services/voice/TextToSpeechService";
 import { FirestoreService } from "../services/db/FirestoreService";
+import { apiPost } from "../lib/apiClient";
 import {
   BookMarked,
   X,
@@ -62,21 +63,11 @@ export const VocabularyModal: React.FC<VocabularyModalProps> = ({
     sound.playCoin();
 
     try {
-      const response = await fetch("/api/player/srs-review", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          card: {
-            repetitions: activeCard.repetitions || 0,
-            interval: activeCard.interval || 1,
-            easeFactor: activeCard.easeFactor || 2.5,
-            lapses: activeCard.lapses || 0,
-          },
-          quality,
-        }),
+      const data = await apiPost<{ success: boolean; updatedCard: any; xpAwarded: number }>("/api/player/srs-review", {
+        cardId: activeCard.id,
+        quality,
       });
 
-      const data = await response.json();
       if (data.success && data.updatedCard) {
         const updated: VocabularyWord = {
           ...activeCard,
@@ -89,7 +80,7 @@ export const VocabularyModal: React.FC<VocabularyModalProps> = ({
         FirestoreService.saveVocabularyWord(userId, updated);
       }
     } catch (e) {
-      console.warn("SM-2 local fallback:", e);
+      console.warn("SM-2 server review notice:", e);
     }
 
     setIsFlipped(false);
