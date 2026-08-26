@@ -1,0 +1,6 @@
+{
+  "name": "English City",
+  "description": "An open-world virtual city AI English learning game with interactive districts, intelligent NPCs, adaptive CEFR missions, real-time voice, and career simulations.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
