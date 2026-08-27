@@ -19,6 +19,7 @@ export interface VocabularyCardData {
   retentionEstimate: number;
   nextReviewDate: string;
   timesReviewed: number;
+  lastReviewedAt?: string;
 }
 
 export class SRSAuthorityService {
@@ -63,6 +64,10 @@ export class SRSAuthorityService {
       quality
     );
 
+    const now = new Date();
+    const lastReviewedTime = currentCard.lastReviewedAt ? new Date(currentCard.lastReviewedAt).getTime() : 0;
+    const isWithinCooldown = (now.getTime() - lastReviewedTime) < 180000; // 3 minute cooldown for reward farming
+
     const updatedCard: VocabularyCardData = {
       id: cardId,
       word: currentCard.word || "Word",
@@ -80,6 +85,7 @@ export class SRSAuthorityService {
       retentionEstimate: sm2Result.retentionEstimate,
       nextReviewDate: sm2Result.nextReviewDate,
       timesReviewed: (currentCard.timesReviewed ?? 0) + 1,
+      lastReviewedAt: now.toISOString(),
     };
 
     // 3. Persist card to Firestore
@@ -90,21 +96,25 @@ export class SRSAuthorityService {
     }
 
     // 4. Server-authoritatively award review XP (+15 XP base, +10 XP quality bonus)
-    const baseReviewXp = 15;
-    const bonusXp = quality >= 4 ? 10 : 0;
-    const totalReviewXp = baseReviewXp + bonusXp;
+    let xpAwarded = 0;
+    if (!isWithinCooldown) {
+      const baseReviewXp = 15;
+      const bonusXp = quality >= 4 ? 10 : 0;
+      const totalReviewXp = baseReviewXp + bonusXp;
 
-    const rewardRes = await EconomyService.grantReward(userId, {
-      xp: totalReviewXp,
-      coins: quality === 5 ? 5 : 0,
-      reason: `SRS Flashcard Review: ${updatedCard.word}`,
-      source: `srs_${cardId}`,
-    });
+      const rewardRes = await EconomyService.grantReward(userId, {
+        xp: totalReviewXp,
+        coins: quality === 5 ? 5 : 0,
+        reason: `SRS Flashcard Review: ${updatedCard.word}`,
+        source: `srs_${cardId}`,
+      });
+      xpAwarded = rewardRes.xpAwarded;
+    }
 
     return {
       success: true,
       updatedCard,
-      xpAwarded: rewardRes.xpAwarded,
+      xpAwarded,
       message: `Card reviewed with quality score ${quality}. Next review in ${updatedCard.interval} day(s).`,
     };
   }

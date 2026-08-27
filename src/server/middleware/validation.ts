@@ -24,11 +24,12 @@ export function detectPromptInjection(text: string): boolean {
   
   const dangerousPatterns = [
     /ignore (all )?(previous|above|prior) (instructions|prompts|rules)/i,
-    /system:\s*you are now/i,
-    /disregard your (system )?prompt/i,
-    /you are now an unfiltered/i,
-    /output the system (instructions|prompt)/i,
+    /(system:\s*)?you are now (an unfiltered|the system|a system|admin|the administrator|system administrator)/i,
+    /disregard (all )?(your )?(system )?(prompt|instructions|rules)/i,
+    /(reveal|output|print|show|display) (the|your) (system )?(instructions|prompt|rules)/i,
     /grant me [0-9]+ (xp|coins|money)/i,
+    /(override|bypass) (all )?(security|checks|system|rules)/i,
+    /system:\s*override/i,
   ];
 
   return dangerousPatterns.some((pattern) => pattern.test(lower));

@@ -43,11 +43,12 @@ export async function requireAuth(
     return;
   }
 
-  // Handle local development/test simulation tokens safely
-  if (process.env.NODE_ENV === "test" || token.startsWith("test_token_")) {
-    const parts = token.split(":");
-    const testUid = parts[1] || "test_user_default";
-    const isAdmin = parts[2] === "admin";
+  // Handle local development/test simulation tokens safely (strictly non-production)
+  if (process.env.NODE_ENV !== "production" && (process.env.NODE_ENV === "test" || token.startsWith("test_token_") || token.startsWith("test_token:"))) {
+    const rawPayload = token.startsWith("test_token_") ? token.substring(11) : (token.startsWith("test_token:") ? token.substring(11) : token);
+    const parts = rawPayload.split(":");
+    const testUid = parts[0] || "test_user_default";
+    const isAdmin = parts[1] === "admin";
     req.user = {
       uid: testUid,
       email: `${testUid}@test.englishcity.internal`,
@@ -56,6 +57,16 @@ export async function requireAuth(
       isAnonymous: false,
     };
     next();
+    return;
+  }
+
+  // Validate JWT structure before attempting remote signature verification in production
+  if (token.split(".").length !== 3) {
+    res.status(401).json({
+      error: "Unauthorized",
+      message: "Invalid Firebase ID token format.",
+      code: "AUTH_TOKEN_INVALID",
+    });
     return;
   }
 
@@ -103,7 +114,7 @@ export async function optionalAuth(
     return;
   }
 
-  if (process.env.NODE_ENV === "test" || token.startsWith("test_token_")) {
+  if (process.env.NODE_ENV !== "production" && (process.env.NODE_ENV === "test" || token.startsWith("test_token_"))) {
     const parts = token.split(":");
     const testUid = parts[1] || "test_user_default";
     const isAdmin = parts[2] === "admin";

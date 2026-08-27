@@ -28,7 +28,7 @@ export class NPCMemoryAuthorityService {
   /**
    * Calculates similarity between two memory strings (simple word overlap metric)
    */
-  private static calculateSimilarity(a: string, b: string): number {
+  public static calculateSimilarity(a: string, b: string): number {
     const wordsA = new Set(a.toLowerCase().split(/\W+/).filter((w) => w.length > 2));
     const wordsB = new Set(b.toLowerCase().split(/\W+/).filter((w) => w.length > 2));
     if (wordsA.size === 0 || wordsB.size === 0) return 0;

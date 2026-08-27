@@ -28,6 +28,11 @@ service cloud.firestore {
       let data = request.resource.data;
       return data.userId == userId
         && data.name is string && data.name.size() > 0 && data.name.size() <= 60
+        && (!('xp' in data) || data.xp == 0)
+        && (!('coins' in data) || (data.coins is number && data.coins <= 100 && data.coins >= 0))
+        && (!('level' in data) || data.level == 'A1' || data.level == 'A2')
+        && (!('cefrLevel' in data) || data.cefrLevel == 'A1' || data.cefrLevel == 'A2')
+        && (!('overallScore' in data) || (data.overallScore is number && data.overallScore <= 50 && data.overallScore >= 0))
         && (!('role' in data) || data.role == 'user')
         && (!('isAdmin' in data) || data.isAdmin == false)
         && (!('admin' in data) || data.admin == false);

@@ -53,6 +53,19 @@ export default function App() {
 
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== "undefined" ? navigator.onLine : true);
+
+  // Monitor network connectivity for offline resilience
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
 
   // Check if player completed onboarding
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState<boolean>(() => {
@@ -194,6 +207,31 @@ export default function App() {
     localStorage.setItem(STORAGE_KEY_VOCAB, JSON.stringify(vocabulary));
   }, [vocabulary]);
 
+  // Global Keyboard Accessibility: Close active modal or overlay on Escape
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (showTransitModal) setShowTransitModal(false);
+        else if (activeCityEvent) setActiveCityEvent(null);
+        else if (inspectingSign) setInspectingSign(null);
+        else if (showAuthModal) setShowAuthModal(false);
+        else if (activeModal) setActiveModal(null);
+        else if (activeNpcDialogue) setActiveNpcDialogue(null);
+        else if (activeLocationInterior) setActiveLocationInterior(null);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [
+    showTransitModal,
+    activeCityEvent,
+    inspectingSign,
+    showAuthModal,
+    activeModal,
+    activeNpcDialogue,
+    activeLocationInterior,
+  ]);
+
   // Audio mute toggling
   const handleToggleSound = () => {
     const next = !soundEnabled;
@@ -240,8 +278,12 @@ export default function App() {
     setPlayer((p) => ({ ...p, xp: p.xp + 25 }));
   };
 
-  // Complete a mission objective
+  // Complete a mission objective (Server Authoritative)
   const handleCompleteObjective = (missionId: string, objectiveId: string) => {
+    let shouldClaimReward = false;
+    let fallbackXp = 200;
+    let fallbackCoins = 50;
+
     setMissions((prev) =>
       prev.map((m) => {
         if (m.id === missionId) {
@@ -249,6 +291,11 @@ export default function App() {
             obj.id === objectiveId ? { ...obj, completed: true } : obj
           );
           const allDone = updatedObjectives.every((obj) => obj.completed);
+          if (allDone && !m.rewardClaimed) {
+            shouldClaimReward = true;
+            fallbackXp = m.xpReward || 200;
+            fallbackCoins = m.coinReward || 50;
+          }
           const updatedMission = {
             ...m,
             objectives: updatedObjectives,
@@ -257,17 +304,36 @@ export default function App() {
               (updatedObjectives.filter((o) => o.completed).length / updatedObjectives.length) * 100
             ),
           };
-          if (currentUser?.uid) {
-            FirestoreService.saveMission(currentUser.uid, updatedMission);
-          }
-          if (allDone && !m.rewardClaimed) {
-            handleReward(m.xpReward || 200, m.coinReward || 50);
-          }
           return updatedMission;
         }
         return m;
       })
     );
+
+    if (currentUser?.uid) {
+      apiPost<{ success: boolean; isCompleted: boolean; xpAwarded: number; coinAwarded: number; player: any }>(
+        "/api/player/mission/complete-objective",
+        { missionId, objectiveId }
+      )
+        .then((res) => {
+          if (res?.player) {
+            setPlayer((prev) => ({
+              ...prev,
+              xp: res.player.xp ?? prev.xp,
+              level: res.player.level ?? prev.level,
+              coins: res.player.coins ?? prev.coins,
+            }));
+          }
+        })
+        .catch((err) => {
+          console.warn("Server mission sync fallback:", err);
+          if (shouldClaimReward) {
+            handleReward(fallbackXp, fallbackCoins);
+          }
+        });
+    } else if (shouldClaimReward) {
+      handleReward(fallbackXp, fallbackCoins);
+    }
   };
 
   // Gain XP and Coins reward (calls server if authenticated)
@@ -322,6 +388,18 @@ export default function App() {
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-slate-950 text-slate-100 select-none font-sans">
+      {/* Offline Status Banner */}
+      {!isOnline && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed top-14 left-1/2 -translate-x-1/2 z-50 bg-amber-500 text-slate-950 font-semibold px-4 py-1.5 rounded-full text-xs flex items-center gap-2 shadow-lg backdrop-blur-md animate-pulse"
+        >
+          <span className="w-2 h-2 rounded-full bg-slate-950"></span>
+          Offline Mode — Game state saved locally; will sync automatically when reconnected.
+        </div>
+      )}
+
       {/* 1. Onboarding Placement Modal for first-time citizens */}
       {!hasCompletedOnboarding && (
         <OnboardingFlow

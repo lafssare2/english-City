@@ -86,7 +86,23 @@ app.post(
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const uid = req.user!.uid;
-      const { npc, player, conversationHistory, playerMessage, activeMission, memories } = req.body;
+      const { npc, player, conversationHistory, playerMessage, activeMission, memories, isSuspiciousPrompt } = req.body;
+
+      if (isSuspiciousPrompt) {
+        return res.json({
+          reply: `I beg your pardon, but I'm here to practice everyday English conversation in ${npc?.locationName || "the city"}. Let's focus on our topic!`,
+          arabicSummary: "عذراً، دعنا نركز على ممارسة المحادثة باللغة الإنجليزية في سياق المدينة.",
+          missionObjectiveCompleted: false,
+          evaluation: {
+            fluencyScore: 70,
+            grammarScore: 70,
+            feedbackTip: "Try phrasing your question using standard conversational English.",
+          },
+          corrections: [],
+          discoveredVocabulary: [],
+        });
+      }
+
       const ai = getAI();
 
       if (!ai) {

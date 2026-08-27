@@ -24,6 +24,10 @@ export function getAdminAuth(): Auth {
 }
 
 export function getAdminFirestore(): Firestore {
-  return getFirestore(getFirebaseAdmin());
+  const adminAppInstance = getFirebaseAdmin();
+  if (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== "(default)") {
+    return getFirestore(adminAppInstance, firebaseConfig.firestoreDatabaseId);
+  }
+  return getFirestore(adminAppInstance);
 }
 
