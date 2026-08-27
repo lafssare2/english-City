@@ -48,7 +48,7 @@ The application will be running at `http://localhost:3000`.
 
 Run the test suites:
 \`\`\`bash
-# 1. Zero-Trust Security & Server API Integration Audit (32 verification checks)
+# 1. Zero-Trust Security & Server API Integration Audit (43 verification checks across 12 categories)
 npx tsx src/tests/securityAndApiAuditTest.ts
 
 # 2. End-to-End Foundation & Pedagogical Systems Verification (22 flows)

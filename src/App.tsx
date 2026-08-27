@@ -443,6 +443,8 @@ export default function App() {
         onInspectSign={(sign) => setInspectingSign(sign)}
         onOpenEvent={(event) => setActiveCityEvent(event)}
         onOpenTransit={() => setShowTransitModal(true)}
+        onAddVocabulary={handleAddVocabulary}
+        onGainXpCoins={handleReward}
       />
 
       {/* 4. Building Interior Explorer (When stepped inside a cafe, airport, hotel, etc.) */}

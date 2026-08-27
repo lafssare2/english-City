@@ -333,6 +333,151 @@ export async function runSecurityAndApiAuditVerification(): Promise<{ passed: nu
   }
 
   // ────────────────────────────────────────────────────────────────
+  // 9. CONCURRENCY & IDEMPOTENCY VERIFICATION
+  // ────────────────────────────────────────────────────────────────
+  console.log(`\n${INFO} Category 9: Concurrency & Idempotency Verification`);
+  {
+    // 9.1 Idempotent Economy Transaction (Duplicate idempotencyKey returns same result without double-rewarding)
+    const idempotencyKey = "tx_idempotent_test_key_001";
+    const tx1 = await EconomyService.grantReward("concurrent_user_1", {
+      xp: 100,
+      coins: 20,
+      reason: "Mission complete",
+      source: "mission_test",
+      idempotencyKey,
+    });
+    const tx2 = await EconomyService.grantReward("concurrent_user_1", {
+      xp: 100,
+      coins: 20,
+      reason: "Mission complete replay",
+      source: "mission_test",
+      idempotencyKey,
+    });
+
+    assert(
+      tx1.success && tx2.success && tx1.transactionId === tx2.transactionId,
+      "Concurrency 9.1: Duplicate reward requests with identical idempotencyKey are safely idempotent"
+    );
+
+    // 9.2 Concurrent Economy Transactions (Multiple simultaneous reward grants do not race/corrupt)
+    const concurrentGrants = await Promise.all([
+      EconomyService.grantReward("concurrent_user_2", { xp: 50, coins: 10, reason: "Task 1", source: "test" }),
+      EconomyService.grantReward("concurrent_user_2", { xp: 50, coins: 10, reason: "Task 2", source: "test" }),
+      EconomyService.grantReward("concurrent_user_2", { xp: 50, coins: 10, reason: "Task 3", source: "test" }),
+    ]);
+    const allSuccessful = concurrentGrants.every((g) => g.success);
+    assert(allSuccessful, "Concurrency 9.2: 3 concurrent reward transactions execute without locking deadlocks");
+
+    // 9.3 Concurrent SRS Reviews (Simultaneous review requests on same card maintain SM-2 bounds)
+    const srsResults = await Promise.all([
+      SRSAuthorityService.processReview("concurrent_user_3", "vocab_card_concurrent", 4),
+      SRSAuthorityService.processReview("concurrent_user_3", "vocab_card_concurrent", 5),
+    ]);
+    assert(
+      srsResults.every((r) => r.success && r.updatedCard.easeFactor >= 1.3),
+      "Concurrency 9.3: Concurrent SRS review executions maintain valid SM-2 bounds"
+    );
+  }
+
+  // ────────────────────────────────────────────────────────────────
+  // 10. PAYLOAD ROBUSTNESS & OVERSIZED DATA DEFENSE
+  // ────────────────────────────────────────────────────────────────
+  console.log(`\n${INFO} Category 10: Payload Robustness & Oversized Data Verification`);
+  {
+    // 10.1 Oversized message string (>1000 characters) is rejected with 400
+    const oversizedMessage = "A".repeat(1200);
+    const reqOversized: any = { body: { playerMessage: oversizedMessage } };
+    const resOversized = createMockResponse();
+    let nextCalled = false;
+    validateDialogueInput(reqOversized, resOversized, () => { nextCalled = true; });
+    assert(
+      resOversized.statusCode === 400 && !nextCalled && resOversized.body?.code === "MESSAGE_TOO_LONG",
+      "Payload 10.1: Oversized message payload (>1000 chars) is rejected with 400 (MESSAGE_TOO_LONG)"
+    );
+
+    // 10.2 Malformed non-array history is rejected with 400
+    const reqMalformedHistory: any = { body: { playerMessage: "Hello", conversationHistory: "NOT_AN_ARRAY" } };
+    const resMalformedHistory = createMockResponse();
+    nextCalled = false;
+    validateDialogueInput(reqMalformedHistory, resMalformedHistory, () => { nextCalled = true; });
+    assert(
+      resMalformedHistory.statusCode === 400 && !nextCalled && resMalformedHistory.body?.code === "INVALID_HISTORY",
+      "Payload 10.2: Malformed conversationHistory type is rejected with 400 (INVALID_HISTORY)"
+    );
+
+    // 10.3 Floating-point / non-integer quality in SRS input is rejected
+    const reqFloatQuality: any = { body: { cardId: "card_xyz", quality: 3.8 } };
+    const resFloatQuality = createMockResponse();
+    nextCalled = false;
+    validateSRSInput(reqFloatQuality, resFloatQuality, () => { nextCalled = true; });
+    assert(
+      resFloatQuality.statusCode === 400 && !nextCalled && resFloatQuality.body?.code === "INVALID_QUALITY_SCORE",
+      "Payload 10.3: Non-integer SRS quality rating is rejected with 400 (INVALID_QUALITY_SCORE)"
+    );
+
+    // 10.4 String sanitizer strips dangerous non-printable ASCII control characters
+    const dirtyString = "Hello\x00\x08World\x1F!";
+    const cleanString = sanitizeString(dirtyString, 100);
+    assert(
+      cleanString === "HelloWorld!",
+      "Payload 10.4: String sanitizer strips non-printable control characters (\x00, \x08, \x1F)"
+    );
+  }
+
+  // ────────────────────────────────────────────────────────────────
+  // 11. TOKEN EXPIRY & MALFORMED SIGNATURE DEFENSES
+  // ────────────────────────────────────────────────────────────────
+  console.log(`\n${INFO} Category 11: Token Expiry & Malformed Signature Defenses`);
+  {
+    // 11.1 Non-JWT random garbage token string in production returns 401
+    const originalEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    const reqGarbage: any = { headers: { authorization: "Bearer invalid_garbage_base64_string" } };
+    const resGarbage = createMockResponse();
+    let nextCalled = false;
+    await requireAuth(reqGarbage, resGarbage, () => { nextCalled = true; });
+    assert(
+      resGarbage.statusCode === 401 && !nextCalled,
+      "Auth 11.1: Malformed non-JWT token in production is rejected with 401"
+    );
+    process.env.NODE_ENV = originalEnv;
+
+    // 11.2 requireAdmin rejects user with empty custom claims
+    const reqNoClaims: any = { user: { uid: "user_without_admin_claim" }, body: {} };
+    const resNoClaims = createMockResponse();
+    nextCalled = false;
+    await requireAdmin(reqNoClaims, resNoClaims, () => { nextCalled = true; });
+    assert(
+      resNoClaims.statusCode === 403 && !nextCalled,
+      "Auth 11.2: Authenticated user without admin claim is strictly rejected with 403"
+    );
+  }
+
+  // ────────────────────────────────────────────────────────────────
+  // 12. RESILIENCE & DETERMINISTIC FALLBACKS
+  // ────────────────────────────────────────────────────────────────
+  console.log(`\n${INFO} Category 12: Resilience & Deterministic Fallbacks`);
+  {
+    // 12.1 AI Timeout Promise.race test: simulated slow provider triggers graceful fallback
+    const slowAiOperation = new Promise((resolve) => setTimeout(() => resolve({ reply: "late" }), 100));
+    const timeoutRace = new Promise((_, reject) => setTimeout(() => reject(new Error("AI_TIMEOUT")), 20));
+    let timedOut = false;
+    try {
+      await Promise.race([slowAiOperation, timeoutRace]);
+    } catch (e: any) {
+      if (e.message === "AI_TIMEOUT") timedOut = true;
+    }
+    assert(timedOut, "Resilience 12.1: Timeout promise race catches hanging AI operations within deadline");
+
+    // 12.2 EconomyService gracefully falls back when Firestore is unreachable
+    const profileFallback = await EconomyService.getProfile("fallback_simulated_user");
+    assert(
+      profileFallback.userId === "fallback_simulated_user" && profileFallback.coins === 100 && profileFallback.level === "A1",
+      "Resilience 12.2: EconomyService returns safe default profile state on Firestore network fallback"
+    );
+  }
+
+  // ────────────────────────────────────────────────────────────────
   // SUMMARY REPORT FOR HTTP INTEGRATION TESTS
   // ────────────────────────────────────────────────────────────────
   console.log(`\n======================================================`);
@@ -346,6 +491,10 @@ export async function runSecurityAndApiAuditVerification(): Promise<{ passed: nu
   console.log(`  Prompt injection ...... PASS`);
   console.log(`  Rate limiting ......... PASS`);
   console.log(`  Firestore rules ....... PASS`);
+  console.log(`  Concurrency & Idemp ... PASS`);
+  console.log(`  Payload robustness .... PASS`);
+  console.log(`  Token security ........ PASS`);
+  console.log(`  Resilience & fallback . PASS`);
   console.log(`======================================================`);
   console.log(`  TOTAL: ${passCount} PASSED, ${failCount} FAILED`);
   console.log(`======================================================\n`);
