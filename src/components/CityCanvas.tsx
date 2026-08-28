@@ -10,7 +10,7 @@ import {
   CityEvent,
   VocabularyWord,
 } from "../types";
-import { DISTRICTS, CITY_LOCATIONS, NPCS } from "../data/initialData";
+import { DISTRICTS, NPCS } from "../data/initialData";
 import { WorldEngine } from "../services/city/WorldEngine";
 import { CityEventEngine } from "../services/city/CityEventEngine";
 import { CITY_EVENTS } from "../content/events/cityEvents";
@@ -22,21 +22,14 @@ import {
 import { EnvironmentalObjectModal } from "./city/EnvironmentalObjectModal";
 import { sound } from "../utils/audioSynthesizer";
 import {
-  MessageSquare,
-  DoorOpen,
-  Footprints,
-  Compass,
-  Zap,
   Sparkles,
   Lightbulb,
   AlertTriangle,
   Train,
-  Volume2,
   ZoomIn,
   ZoomOut,
-  Maximize2,
+  Footprints,
   Layers,
-  MapPin,
 } from "lucide-react";
 
 interface CityCanvasProps {
@@ -53,6 +46,8 @@ interface CityCanvasProps {
   onOpenTransit?: () => void;
   onAddVocabulary?: (word: VocabularyWord) => void;
   onGainXpCoins?: (xp: number, coins: number) => void;
+  onToggleViewMode?: () => void;
+  viewMode?: "3d" | "2d";
 }
 
 interface SimulationPedestrian {
@@ -62,19 +57,22 @@ interface SimulationPedestrian {
   targetX: number;
   targetY: number;
   speed: number;
-  emoji: string;
+  color: string;
   thoughtBubble: string;
 }
 
 interface SimulationVehicle {
   id: string;
-  type: "taxi" | "car" | "bus" | "ambulance";
+  type: "taxi" | "car" | "bus" | "ambulance" | "delivery_van" | "police" | "fire_engine" | "bicycle";
   x: number;
   y: number;
   laneY: number;
   direction: "left" | "right";
   speed: number;
   color: string;
+  width: number;
+  height: number;
+  isParked?: boolean;
 }
 
 export const CityCanvas: React.FC<CityCanvasProps> = ({
@@ -91,6 +89,8 @@ export const CityCanvas: React.FC<CityCanvasProps> = ({
   onOpenTransit,
   onAddVocabulary,
   onGainXpCoins,
+  onToggleViewMode,
+  viewMode = "2d",
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -130,20 +130,28 @@ export const CityCanvas: React.FC<CityCanvasProps> = ({
     animTime: number;
   }>({
     pedestrians: [
-      { id: "p1", x: 280, y: 418, targetX: 750, targetY: 418, speed: 0.85, emoji: "🚶", thoughtBubble: "Ordering an espresso..." },
-      { id: "p2", x: 720, y: 580, targetX: 220, targetY: 580, speed: 0.65, emoji: "🚶‍♀️", thoughtBubble: "Where is the library?" },
-      { id: "p3", x: 420, y: 380, targetX: 860, targetY: 380, speed: 1.15, emoji: "🏃", thoughtBubble: "Catching the 10:15 express train!" },
-      { id: "p4", x: 180, y: 420, targetX: 620, targetY: 420, speed: 0.75, emoji: "🚶‍♂️", thoughtBubble: "Practicing English vocabulary." },
+      { id: "p1", x: 280, y: 418, targetX: 750, targetY: 418, speed: 0.85, color: "#38bdf8", thoughtBubble: "Ordering an espresso..." },
+      { id: "p2", x: 720, y: 580, targetX: 220, targetY: 580, speed: 0.65, color: "#f43f5e", thoughtBubble: "Where is the library?" },
+      { id: "p3", x: 420, y: 380, targetX: 860, targetY: 380, speed: 1.15, color: "#10b981", thoughtBubble: "Catching the express train!" },
+      { id: "p4", x: 180, y: 420, targetX: 620, targetY: 420, speed: 0.75, color: "#a855f7", thoughtBubble: "Practicing English vocabulary." },
+      { id: "p5", x: 520, y: 580, targetX: 880, targetY: 580, speed: 0.7, color: "#eab308", thoughtBubble: "Walking my golden retriever 🐕" },
     ],
     vehicles: [
-      { id: "v1", type: "taxi", x: 80, y: 472, laneY: 472, direction: "right", speed: 2.5, color: "#eab308" },
-      { id: "v2", type: "car", x: 920, y: 528, laneY: 528, direction: "left", speed: 2.8, color: "#ef4444" },
-      { id: "v3", type: "bus", x: 380, y: 472, laneY: 472, direction: "right", speed: 1.7, color: "#0284c7" },
-      { id: "v4", type: "ambulance", x: 820, y: 528, laneY: 528, direction: "left", speed: 3.2, color: "#f8fafc" },
+      { id: "v1", type: "taxi", x: 80, y: 472, laneY: 472, direction: "right", speed: 2.5, color: "#facc15", width: 44, height: 20 },
+      { id: "v2", type: "car", x: 920, y: 528, laneY: 528, direction: "left", speed: 2.8, color: "#ef4444", width: 42, height: 18 },
+      { id: "v3", type: "bus", x: 380, y: 472, laneY: 472, direction: "right", speed: 1.7, color: "#0284c7", width: 68, height: 22 },
+      { id: "v4", type: "ambulance", x: 820, y: 528, laneY: 528, direction: "left", speed: 3.2, color: "#f8fafc", width: 48, height: 20 },
+      { id: "v5", type: "police", x: 220, y: 472, laneY: 472, direction: "right", speed: 2.9, color: "#1e3a8a", width: 46, height: 19 },
+      { id: "v6", type: "delivery_van", x: 620, y: 528, laneY: 528, direction: "left", speed: 2.2, color: "#e2e8f0", width: 50, height: 21 },
+      { id: "v7", type: "bicycle", x: 500, y: 450, laneY: 450, direction: "right", speed: 1.4, color: "#2563eb", width: 22, height: 10 },
+      // Parked vehicles along parking bays
+      { id: "vp1", type: "car", x: 160, y: 432, laneY: 432, direction: "right", speed: 0, color: "#475569", width: 42, height: 18, isParked: true },
+      { id: "vp2", type: "car", x: 840, y: 432, laneY: 432, direction: "right", speed: 0, color: "#059669", width: 42, height: 18, isParked: true },
+      { id: "vp3", type: "car", x: 240, y: 568, laneY: 568, direction: "left", speed: 0, color: "#7c3aed", width: 42, height: 18, isParked: true },
     ],
     trafficLight: "green",
     lastLightSwitch: Date.now(),
-    rainParticles: Array.from({ length: 50 }, () => ({
+    rainParticles: Array.from({ length: 60 }, () => ({
       x: Math.random() * 1000,
       y: Math.random() * 1000,
       speed: 14 + Math.random() * 8,
@@ -160,7 +168,7 @@ export const CityCanvas: React.FC<CityCanvasProps> = ({
     }
   }, [currentDistrictId, currentLocationId]);
 
-  // Master 60 FPS Procedural 2.5D Canvas Drawing Loop
+  // Master 60 FPS Procedural 2.5D Canvas Drawing Loop with Y-Sorting
   useEffect(() => {
     let animId: number;
     const canvas = canvasRef.current;
@@ -186,210 +194,39 @@ export const CityCanvas: React.FC<CityCanvasProps> = ({
 
       ctx.clearRect(0, 0, 1000, 1000);
 
-      // 2. Draw District Ground Terrain (Grass, Sand/Waves, Stone, Asphalt)
+      // 2. Foundation Terrain (Grass, Sand/Waves, Stone, Asphalt)
       CityAssetRenderer.drawTerrain(
         ctx,
         currentDistrictId,
         1000,
         1000,
-        state.animTime
+        state.animTime,
+        timeOfDay
       );
 
-      // 3. Draw Road Network (Avenues, Yellow center lines, Stop lines, Zebra crosswalks)
-      CityAssetRenderer.drawRoadNetwork(ctx, 1000, 1000);
+      // 3. District Road Network (Avenues, markings, crosswalks, stencils)
+      CityAssetRenderer.drawRoadNetwork(ctx, currentDistrictId, 1000, 1000);
 
-      // 4. Draw Street Furniture & Environmental Props (Lamps, Benches, Trees, ATMs, Bus Stops)
-      // Street Lamps
-      CityAssetRenderer.drawStreetProp(
-        ctx,
-        { type: "street_lamp", x: 220, y: 426 },
-        timeOfDay,
-        state.animTime
-      );
-      CityAssetRenderer.drawStreetProp(
-        ctx,
-        { type: "street_lamp", x: 680, y: 426 },
-        timeOfDay,
-        state.animTime
-      );
-      CityAssetRenderer.drawStreetProp(
-        ctx,
-        { type: "street_lamp", x: 220, y: 574 },
-        timeOfDay,
-        state.animTime
-      );
-      CityAssetRenderer.drawStreetProp(
-        ctx,
-        { type: "street_lamp", x: 680, y: 574 },
-        timeOfDay,
-        state.animTime
-      );
-
-      // Trees with swaying foliage
-      CityAssetRenderer.drawStreetProp(
-        ctx,
-        { type: "tree", x: 120, y: 420 },
-        timeOfDay,
-        state.animTime
-      );
-      CityAssetRenderer.drawStreetProp(
-        ctx,
-        { type: "tree", x: 880, y: 420 },
-        timeOfDay,
-        state.animTime
-      );
-      CityAssetRenderer.drawStreetProp(
-        ctx,
-        { type: "tree", x: 120, y: 580 },
-        timeOfDay,
-        state.animTime
-      );
-      CityAssetRenderer.drawStreetProp(
-        ctx,
-        { type: "tree", x: 880, y: 580 },
-        timeOfDay,
-        state.animTime
-      );
-
-      // Benches & Trash Cans
-      CityAssetRenderer.drawStreetProp(
-        ctx,
-        { type: "bench", x: 300, y: 424 },
-        timeOfDay,
-        state.animTime
-      );
-      CityAssetRenderer.drawStreetProp(
-        ctx,
-        { type: "trash_bin", x: 326, y: 424 },
-        timeOfDay,
-        state.animTime
-      );
-      CityAssetRenderer.drawStreetProp(
-        ctx,
-        { type: "mailbox", x: 640, y: 424 },
-        timeOfDay,
-        state.animTime
-      );
-      CityAssetRenderer.drawStreetProp(
-        ctx,
-        { type: "atm", x: 380, y: 424 },
-        timeOfDay,
-        state.animTime
-      );
-
-      // Traffic Light at intersection
-      CityAssetRenderer.drawStreetProp(
-        ctx,
-        { type: "traffic_light", x: 428, y: 424, state: state.trafficLight },
-        timeOfDay,
-        state.animTime
-      );
-      CityAssetRenderer.drawStreetProp(
-        ctx,
-        { type: "traffic_light", x: 572, y: 576, state: state.trafficLight },
-        timeOfDay,
-        state.animTime
-      );
-
-      // 5. Draw 2.5D Building Facades
-      districtLocations.forEach((loc) => {
-        const dx = loc.canvasX - playerPos.x;
-        const dy = loc.canvasY - playerPos.y;
-        const isNear = Math.sqrt(dx * dx + dy * dy) < 130;
-
-        CityAssetRenderer.drawBuilding(
-          ctx,
-          {
-            id: loc.id,
-            name: loc.name,
-            category: (loc as any).templateType || loc.category || "building",
-            x: loc.canvasX,
-            y: loc.canvasY,
-            width: 140,
-            height: 110,
-            signText: loc.name.toUpperCase(),
-            isHighlighted: isNear,
-          },
-          timeOfDay
-        );
-      });
-
-      // 6. Render & Simulate Vehicles on Roads
+      // 4. Update Vehicle Physics
       for (const veh of state.vehicles) {
-        let newX = veh.direction === "right" ? veh.x + veh.speed : veh.x - veh.speed;
+        if (veh.isParked) continue;
 
-        // Vehicle stops at red traffic light before crosswalk
         const isRed = state.trafficLight === "red" || state.trafficLight === "yellow";
         if (
           isRed &&
           ((veh.direction === "right" && veh.x > 340 && veh.x < 390) ||
             (veh.direction === "left" && veh.x < 660 && veh.x > 610))
         ) {
-          // Stay stopped
+          // Stop before crosswalk
         } else {
-          veh.x = newX;
+          veh.x = veh.direction === "right" ? veh.x + veh.speed : veh.x - veh.speed;
         }
 
         if (veh.direction === "right" && veh.x > 1080) veh.x = -80;
         if (veh.direction === "left" && veh.x < -80) veh.x = 1080;
-
-        // Draw vehicle body & shadow
-        ctx.save();
-        ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
-        ctx.beginPath();
-        ctx.roundRect(veh.x - 24, veh.y - 10, 48, 20, 6);
-        ctx.fill();
-
-        ctx.fillStyle = veh.color;
-        ctx.beginPath();
-        ctx.roundRect(veh.x - 22, veh.y - 12, 44, 20, 5);
-        ctx.fill();
-        ctx.strokeStyle = "#0f172a";
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-
-        // Vehicle Windows
-        ctx.fillStyle = "#38bdf8";
-        ctx.fillRect(veh.x - 10, veh.y - 10, 20, 16);
-
-        // Ambulance flashing siren
-        if (veh.type === "ambulance") {
-          const flash = Math.floor(state.animTime / 150) % 2 === 0;
-          ctx.fillStyle = flash ? "#ef4444" : "#3b82f6";
-          ctx.beginPath();
-          ctx.arc(veh.x, veh.y - 14, 4, 0, Math.PI * 2);
-          ctx.fill();
-        }
-
-        // Night Headlight Cones
-        if (timeOfDay === "night" || timeOfDay === "evening") {
-          const grad = ctx.createLinearGradient(
-            veh.direction === "right" ? veh.x + 22 : veh.x - 22,
-            veh.y,
-            veh.direction === "right" ? veh.x + 110 : veh.x - 110,
-            veh.y
-          );
-          grad.addColorStop(0, "rgba(254, 240, 138, 0.45)");
-          grad.addColorStop(1, "rgba(254, 240, 138, 0)");
-          ctx.fillStyle = grad;
-          ctx.beginPath();
-          if (veh.direction === "right") {
-            ctx.moveTo(veh.x + 22, veh.y - 8);
-            ctx.lineTo(veh.x + 110, veh.y - 24);
-            ctx.lineTo(veh.x + 110, veh.y + 24);
-            ctx.lineTo(veh.x + 22, veh.y + 8);
-          } else {
-            ctx.moveTo(veh.x - 22, veh.y - 8);
-            ctx.lineTo(veh.x - 110, veh.y - 24);
-            ctx.lineTo(veh.x - 110, veh.y + 24);
-            ctx.lineTo(veh.x - 22, veh.y + 8);
-          }
-          ctx.fill();
-        }
-        ctx.restore();
       }
 
-      // 7. Render & Simulate Pedestrians with Thought Bubbles
+      // 5. Update Pedestrian Physics
       for (const ped of state.pedestrians) {
         const dx = ped.targetX - ped.x;
         const dy = ped.targetY - ped.y;
@@ -402,48 +239,312 @@ export const CityCanvas: React.FC<CityCanvasProps> = ({
           ped.x += (dx / dist) * ped.speed;
           ped.y += (dy / dist) * ped.speed;
         }
-
-        ctx.save();
-        // Thought Bubble
-        ctx.font = "bold 8.5px sans-serif";
-        ctx.textAlign = "center";
-        const bubbleW = ctx.measureText(ped.thoughtBubble).width + 10;
-
-        ctx.fillStyle = "rgba(15, 23, 42, 0.9)";
-        ctx.beginPath();
-        ctx.roundRect(ped.x - bubbleW / 2, ped.y - 28, bubbleW, 14, 4);
-        ctx.fill();
-        ctx.strokeStyle = "#38bdf8";
-        ctx.lineWidth = 1;
-        ctx.stroke();
-
-        ctx.fillStyle = "#f8fafc";
-        ctx.fillText(ped.thoughtBubble, ped.x, ped.y - 18);
-
-        // Emoji Pedestrian
-        ctx.font = "16px sans-serif";
-        ctx.textBaseline = "middle";
-        ctx.fillText(ped.emoji, ped.x, ped.y);
-        ctx.restore();
       }
 
-      // 8. Draw Animated Player Character
-      CityAssetRenderer.drawPlayer(
+      // 6. Build Y-Sorted Render Entities Queue
+      const renderQueue: { y: number; render: () => void }[] = [];
+
+      // A. Static District Street Props tailored to current district
+      const getDistrictProps = (dId: DistrictId): { type: any; x: number; y: number; leftText?: string; rightText?: string; streetName?: string; signType?: any }[] => {
+        switch (dId) {
+          case "beach":
+            return [
+              { type: "street_lamp", x: 220, y: 310 },
+              { type: "street_lamp", x: 480, y: 310 },
+              { type: "street_lamp", x: 800, y: 310 },
+              { type: "tree", x: 140, y: 360 },
+              { type: "tree", x: 380, y: 360 },
+              { type: "tree", x: 860, y: 360 },
+              { type: "bench", x: 280, y: 310 },
+              { type: "bench", x: 580, y: 310 },
+              { type: "cafe_table", x: 340, y: 280 },
+              { type: "cafe_table", x: 420, y: 280 },
+              { type: "lifeguard_tower", x: 480, y: 520 },
+              { type: "fingerpost", x: 640, y: 310, leftText: "BEACH", rightText: "SEAFOOD" },
+              { type: "street_name_sign", x: 160, y: 136, streetName: "Beach Boulevard" },
+              { type: "road_sign", x: 360, y: 136, signType: "SPEED_30" },
+              { type: "road_sign", x: 720, y: 136, signType: "PED_CROSSING" },
+              { type: "manhole", x: 500, y: 190 },
+              { type: "storm_drain", x: 340, y: 138 },
+            ];
+          case "university":
+            return [
+              { type: "street_lamp", x: 200, y: 426 },
+              { type: "street_lamp", x: 800, y: 426 },
+              { type: "street_lamp", x: 200, y: 574 },
+              { type: "street_lamp", x: 800, y: 574 },
+              { type: "tree", x: 140, y: 390 },
+              { type: "tree", x: 860, y: 390 },
+              { type: "tree", x: 140, y: 610 },
+              { type: "tree", x: 860, y: 610 },
+              { type: "fountain", x: 500, y: 500 },
+              { type: "bench", x: 380, y: 430 },
+              { type: "bench", x: 620, y: 430 },
+              { type: "bench", x: 380, y: 570 },
+              { type: "bench", x: 620, y: 570 },
+              { type: "fingerpost", x: 280, y: 430, leftText: "LIBRARY", rightText: "UNION" },
+              { type: "street_name_sign", x: 160, y: 420, streetName: "University Lane" },
+              { type: "road_sign", x: 360, y: 420, signType: "PED_CROSSING" },
+              { type: "mailbox", x: 740, y: 424 },
+            ];
+          case "shopping":
+            return [
+              { type: "street_lamp", x: 220, y: 426 },
+              { type: "street_lamp", x: 680, y: 426 },
+              { type: "street_lamp", x: 220, y: 574 },
+              { type: "street_lamp", x: 680, y: 574 },
+              { type: "planter", x: 180, y: 424 },
+              { type: "planter", x: 480, y: 424 },
+              { type: "planter", x: 820, y: 424 },
+              { type: "cafe_table", x: 320, y: 420 },
+              { type: "cafe_table", x: 620, y: 420 },
+              { type: "bus_stop_shelter", x: 760, y: 420 },
+              { type: "mailbox", x: 580, y: 424 },
+              { type: "bench", x: 400, y: 424 },
+              { type: "fingerpost", x: 260, y: 424, leftText: "MARKET", rightText: "BOUTIQUE" },
+              { type: "street_name_sign", x: 140, y: 420, streetName: "Oxford Street" },
+              { type: "road_sign", x: 360, y: 420, signType: "ONE_WAY" },
+              { type: "road_sign", x: 640, y: 420, signType: "PARKING" },
+              { type: "manhole", x: 500, y: 490 },
+              { type: "storm_drain", x: 380, y: 424 },
+            ];
+          case "medical":
+            return [
+              { type: "street_lamp", x: 220, y: 426 },
+              { type: "street_lamp", x: 680, y: 426 },
+              { type: "street_lamp", x: 220, y: 574 },
+              { type: "street_lamp", x: 680, y: 574 },
+              { type: "fire_hydrant", x: 320, y: 424 },
+              { type: "bench", x: 400, y: 424 },
+              { type: "bus_stop_shelter", x: 760, y: 420 },
+              { type: "fingerpost", x: 260, y: 424, leftText: "TRIAGE", rightText: "PHARMACY" },
+              { type: "traffic_light", x: 428, y: 424 },
+              { type: "traffic_light", x: 572, y: 576 },
+              { type: "street_name_sign", x: 140, y: 420, streetName: "St Jude's Way" },
+              { type: "road_sign", x: 360, y: 420, signType: "STOP" },
+              { type: "road_sign", x: 640, y: 420, signType: "NO_ENTRY" },
+              { type: "manhole", x: 500, y: 500 },
+              { type: "storm_drain", x: 380, y: 424 },
+            ];
+          case "transportation":
+            return [
+              { type: "street_lamp", x: 220, y: 426 },
+              { type: "street_lamp", x: 680, y: 426 },
+              { type: "street_lamp", x: 220, y: 574 },
+              { type: "street_lamp", x: 680, y: 574 },
+              { type: "bus_stop_shelter", x: 740, y: 420 },
+              { type: "bench", x: 340, y: 424 },
+              { type: "fingerpost", x: 260, y: 424, leftText: "METRO", rightText: "BUSES" },
+              { type: "traffic_light", x: 428, y: 424 },
+              { type: "traffic_light", x: 572, y: 576 },
+              { type: "street_name_sign", x: 140, y: 420, streetName: "Station Approach" },
+              { type: "road_sign", x: 360, y: 420, signType: "TAXI_RANK" },
+              { type: "road_sign", x: 640, y: 420, signType: "BUS_STOP" },
+              { type: "manhole", x: 500, y: 500 },
+              { type: "storm_drain", x: 380, y: 424 },
+            ];
+          case "tourist":
+            return [
+              { type: "street_lamp", x: 220, y: 426 },
+              { type: "street_lamp", x: 680, y: 426 },
+              { type: "street_lamp", x: 220, y: 574 },
+              { type: "street_lamp", x: 680, y: 574 },
+              { type: "fountain", x: 500, y: 500 },
+              { type: "bench", x: 360, y: 424 },
+              { type: "bench", x: 640, y: 424 },
+              { type: "mailbox", x: 280, y: 424 },
+              { type: "fingerpost", x: 720, y: 424, leftText: "MUSEUM", rightText: "HOTEL" },
+              { type: "street_name_sign", x: 140, y: 420, streetName: "Victoria Road" },
+              { type: "road_sign", x: 340, y: 420, signType: "PED_CROSSING" },
+            ];
+          default:
+            return [
+              { type: "street_lamp", x: 220, y: 426 },
+              { type: "street_lamp", x: 680, y: 426 },
+              { type: "street_lamp", x: 220, y: 574 },
+              { type: "street_lamp", x: 680, y: 574 },
+              { type: "tree", x: 120, y: 420 },
+              { type: "tree", x: 880, y: 420 },
+              { type: "tree", x: 120, y: 580 },
+              { type: "tree", x: 880, y: 580 },
+              { type: "bench", x: 300, y: 424 },
+              { type: "bus_stop_shelter", x: 760, y: 420 },
+              { type: "mailbox", x: 640, y: 424 },
+              { type: "fire_hydrant", x: 360, y: 424 },
+              { type: "traffic_light", x: 428, y: 424 },
+              { type: "traffic_light", x: 572, y: 576 },
+              { type: "street_name_sign", x: 140, y: 420, streetName: "King's Way" },
+              { type: "road_sign", x: 360, y: 420, signType: "STOP" },
+              { type: "road_sign", x: 640, y: 420, signType: "SPEED_30" },
+              { type: "manhole", x: 500, y: 500 },
+              { type: "storm_drain", x: 380, y: 424 },
+            ];
+        }
+      };
+
+      const propList = getDistrictProps(currentDistrictId);
+
+      for (const p of propList) {
+        renderQueue.push({
+          y: p.y,
+          render: () =>
+            CityAssetRenderer.drawStreetProp(
+              ctx,
+              { ...p, districtId: currentDistrictId, state: state.trafficLight },
+              timeOfDay,
+              state.animTime
+            ),
+        });
+      }
+
+      // B. Architectural Buildings
+      for (const loc of districtLocations) {
+        const dx = loc.canvasX - playerPos.x;
+        const dy = loc.canvasY - playerPos.y;
+        const isNear = Math.sqrt(dx * dx + dy * dy) < 130;
+
+        renderQueue.push({
+          y: loc.canvasY + 40,
+          render: () =>
+            CityAssetRenderer.drawBuilding(
+              ctx,
+              loc,
+              timeOfDay,
+              state.animTime,
+              isNear,
+              false
+            ),
+        });
+      }
+
+      // C. Environmental Learning Objects
+      for (const obj of districtEnvObjects) {
+        const dx = obj.x - playerPos.x;
+        const dy = obj.y - playerPos.y;
+        const isNear = Math.sqrt(dx * dx + dy * dy) < 120;
+
+        renderQueue.push({
+          y: obj.y,
+          render: () =>
+            CityAssetRenderer.drawEnvironmentalObject(
+              ctx,
+              obj,
+              state.animTime,
+              isNear
+            ),
+        });
+      }
+
+      // D. Vehicles
+      for (const veh of state.vehicles) {
+        renderQueue.push({
+          y: veh.y,
+          render: () =>
+            CityAssetRenderer.drawVehicle(
+              ctx,
+              {
+                id: veh.id,
+                x: veh.x,
+                y: veh.y,
+                vx: veh.direction === "right" ? veh.speed : -veh.speed,
+                vy: 0,
+                type: veh.type,
+                color: veh.color,
+                angle: veh.direction === "right" ? 0 : Math.PI,
+                speed: veh.speed,
+                width: veh.width,
+                height: veh.height,
+                isParked: veh.isParked,
+              },
+              state.animTime,
+              timeOfDay
+            ),
+        });
+      }
+
+      // E. NPCs
+      for (const npc of districtNpcs) {
+        const loc = districtLocations.find((l) => l.id === npc.locationId) || districtLocations[0];
+        const npcX = loc ? loc.canvasX + 25 : 500;
+        const npcY = loc ? loc.canvasY + 65 : 500;
+        const dx = npcX - playerPos.x;
+        const dy = npcY - playerPos.y;
+        const isNear = Math.sqrt(dx * dx + dy * dy) < 130;
+
+        renderQueue.push({
+          y: npcY,
+          render: () =>
+            CityAssetRenderer.drawNPC(
+              ctx,
+              npc,
+              npcX,
+              npcY,
+              state.animTime,
+              isNear
+            ),
+        });
+      }
+
+      // F. Simulated Pedestrians
+      for (const ped of state.pedestrians) {
+        renderQueue.push({
+          y: ped.y,
+          render: () =>
+            CityAssetRenderer.drawPedestrian(
+              ctx,
+              {
+                id: ped.id,
+                x: ped.x,
+                y: ped.y,
+                vx: 0,
+                vy: 0,
+                color: ped.color,
+                speed: ped.speed,
+                thought: ped.thoughtBubble,
+              },
+              state.animTime
+            ),
+        });
+      }
+
+      // G. Player
+      renderQueue.push({
+        y: playerPos.y,
+        render: () =>
+          CityAssetRenderer.drawPlayer(
+            ctx,
+            playerPos.x,
+            playerPos.y,
+            playerFacing,
+            isMoving,
+            state.animTime,
+            player.avatarColor,
+            player.name,
+            player.level
+          ),
+      });
+
+      // 7. Sort by Y-coordinate for proper isometric / 2.5D visual depth
+      renderQueue.sort((a, b) => a.y - b.y);
+
+      // Execute all sorted render passes
+      for (const item of renderQueue) {
+        item.render();
+      }
+
+      // 8. Atmospheric Lighting & Color Grading Overlay
+      CityAssetRenderer.drawAtmosphericOverlay(
         ctx,
-        playerPos.x,
-        playerPos.y,
-        playerFacing,
-        isMoving,
-        state.animTime,
-        player.avatarColor,
-        player.name,
-        player.level
+        1000,
+        1000,
+        timeOfDay,
+        weather
       );
 
       // 9. Rain & Weather Particles
       if (weather === "rainy") {
         ctx.save();
-        ctx.strokeStyle = "rgba(147, 197, 253, 0.6)";
+        ctx.strokeStyle = "rgba(147, 197, 253, 0.65)";
         ctx.lineWidth = 1.5;
         for (const drop of state.rainParticles) {
           ctx.beginPath();
@@ -471,7 +572,6 @@ export const CityCanvas: React.FC<CityCanvasProps> = ({
   // Movement handler (Keyboard WASD & Arrows)
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
-      // If modal is open, let modal handle keys
       if (activeEnvObject) return;
 
       const step = 22;
@@ -576,22 +676,6 @@ export const CityCanvas: React.FC<CityCanvasProps> = ({
     return Math.sqrt(dx * dx + dy * dy) < 130;
   });
 
-  // Time-of-day atmospheric color filter
-  const getLightingStyle = () => {
-    switch (timeOfDay) {
-      case "morning":
-        return "from-amber-500/10 via-transparent to-blue-500/10";
-      case "afternoon":
-        return "from-transparent to-transparent";
-      case "evening":
-        return "from-amber-900/30 via-indigo-950/40 to-slate-950/60";
-      case "night":
-        return "from-indigo-950/70 via-slate-950/80 to-slate-950/95";
-      default:
-        return "from-transparent to-transparent";
-    }
-  };
-
   return (
     <main
       id="city-canvas-container"
@@ -612,7 +696,7 @@ export const CityCanvas: React.FC<CityCanvasProps> = ({
           className="absolute inset-0 w-full h-full"
         />
 
-        {/* 2. Interactive Environmental Vocabulary Signs */}
+        {/* 2. Interactive Environmental Vocabulary Signs (HTML Overlay Anchors) */}
         {districtEnvObjects.map((obj) => (
           <div
             key={obj.id}
@@ -722,12 +806,7 @@ export const CityCanvas: React.FC<CityCanvasProps> = ({
         )}
       </div>
 
-      {/* 7. Atmosphere Lighting Gradient Overlay */}
-      <div
-        className={`absolute inset-0 pointer-events-none bg-gradient-to-b ${getLightingStyle()} transition-all duration-1000 z-10`}
-      />
-
-      {/* 8. Top Left District Card */}
+      {/* 7. Top Left District Header Card */}
       <div className="absolute top-20 left-6 z-20 pointer-events-none">
         <div className="flex items-center gap-3 bg-slate-900/90 backdrop-blur-md border border-slate-700/80 px-4 py-2 rounded-2xl shadow-2xl">
           <span className="text-2xl">🏙️</span>
@@ -743,10 +822,22 @@ export const CityCanvas: React.FC<CityCanvasProps> = ({
         </div>
       </div>
 
-      {/* 9. Top Right Game Minimap & Zoom Controls */}
+      {/* 8. Top Right Game Minimap & Zoom Controls */}
       <div className="absolute top-20 right-6 z-30 flex flex-col items-end gap-2 pointer-events-auto">
-        {/* Zoom Controls */}
-        <div className="flex items-center gap-1 bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-xl p-1 shadow-xl">
+        {/* Zoom & View Controls */}
+        <div className="flex items-center gap-1.5 bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-xl p-1.5 shadow-xl">
+          {onToggleViewMode && (
+            <button
+              id="canvas-toggle-3d-button"
+              onClick={onToggleViewMode}
+              className="flex items-center gap-1 px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold transition-colors shadow-sm"
+              title="Switch to 3D World"
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>3D</span>
+            </button>
+          )}
+
           <button
             id="zoom-in-button"
             onClick={() => setZoomLevel((z) => Math.min(1.3, z + 0.15))}
@@ -768,7 +859,7 @@ export const CityCanvas: React.FC<CityCanvasProps> = ({
           </button>
         </div>
 
-        {/* Sleek Mini-Map */}
+        {/* Sleek GPS Mini-Map */}
         <div className="w-28 h-28 bg-slate-950/95 border-2 border-slate-700/80 rounded-2xl shadow-2xl relative overflow-hidden hidden sm:block">
           {/* Mini Road Grid */}
           <div className="absolute top-1/2 left-0 right-0 h-3 -translate-y-1/2 bg-slate-800/80" />
@@ -801,7 +892,7 @@ export const CityCanvas: React.FC<CityCanvasProps> = ({
         </div>
       </div>
 
-      {/* 10. Proximity Action Prompt Bar (Press E to Interact) */}
+      {/* 9. Proximity Action Prompt Bar (Press E to Interact) */}
       {(nearestNpc || nearestLocation || nearestEnvObject || nearestSign) && (
         <div
           id="proximity-action-prompt-bar"
@@ -907,7 +998,7 @@ export const CityCanvas: React.FC<CityCanvasProps> = ({
         </div>
       )}
 
-      {/* 11. Mobile Touch Movement D-Pad */}
+      {/* 10. Mobile Touch Movement D-Pad */}
       <div className="fixed bottom-6 right-6 z-40 sm:hidden bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-3xl p-2.5 shadow-2xl flex flex-col items-center gap-1.5 pointer-events-auto">
         <button
           onClick={() => {
@@ -949,13 +1040,13 @@ export const CityCanvas: React.FC<CityCanvasProps> = ({
         </button>
       </div>
 
-      {/* 12. Desktop Bottom Left Controls Legend */}
+      {/* 11. Desktop Bottom Left Controls Legend */}
       <div className="fixed bottom-6 left-6 z-30 hidden sm:flex items-center gap-2 bg-slate-900/85 backdrop-blur-md border border-slate-800/80 px-3.5 py-1.5 rounded-xl text-xs text-slate-400 shadow-lg pointer-events-none">
         <Footprints className="w-4 h-4 text-blue-400" />
         <span>Controls: <b>WASD</b> / <b>Arrows</b> to walk • <b>E</b> to interact • <b>Click</b> ground</span>
       </div>
 
-      {/* 13. Environmental Vocabulary Object Modal */}
+      {/* 12. Environmental Vocabulary Object Modal */}
       {activeEnvObject && (
         <EnvironmentalObjectModal
           object={activeEnvObject}

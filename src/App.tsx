@@ -28,6 +28,7 @@ import { apiPost } from "./lib/apiClient";
 // Sub-components
 import { CityHUD } from "./components/CityHUD";
 import { CityCanvas } from "./components/CityCanvas";
+import { City3D } from "./game/3d/City3D";
 import { DialogueModal } from "./components/DialogueModal";
 import { BuildingInterior } from "./components/BuildingInterior";
 import { CityMapModal } from "./components/CityMapModal";
@@ -139,6 +140,7 @@ export default function App() {
   const [inspectingSign, setInspectingSign] = useState<CitySign | null>(null);
   const [activeCityEvent, setActiveCityEvent] = useState<CityEvent | null>(null);
   const [showTransitModal, setShowTransitModal] = useState<boolean>(false);
+  const [viewMode, setViewMode] = useState<"3d" | "2d">("3d");
 
   // Firebase Auth State Listener & Firestore Hydration
   useEffect(() => {
@@ -427,25 +429,50 @@ export default function App() {
         onOpenModal={handleOpenModal}
       />
 
-      {/* 3. Main 2D Virtual City Canvas Simulation (When on street) */}
-      <CityCanvas
-        player={player}
-        currentDistrictId={currentDistrictId}
-        currentLocationId={currentLocationId}
-        timeOfDay={timeOfDay}
-        weather={weather}
-        onSelectNpc={(npc) => {
-          sound.playDialoguePop();
-          setActiveNpcDialogue(npc);
-        }}
-        onEnterLocation={handleEnterLocation}
-        onFastTravelDistrict={handleFastTravel}
-        onInspectSign={(sign) => setInspectingSign(sign)}
-        onOpenEvent={(event) => setActiveCityEvent(event)}
-        onOpenTransit={() => setShowTransitModal(true)}
-        onAddVocabulary={handleAddVocabulary}
-        onGainXpCoins={handleReward}
-      />
+      {/* 3. Main 3D World / 2D Canvas Simulation (When on street) */}
+      {viewMode === "3d" ? (
+        <City3D
+          player={player}
+          currentDistrictId={currentDistrictId}
+          currentLocationId={currentLocationId}
+          timeOfDay={timeOfDay}
+          weather={weather}
+          onSelectNpc={(npc) => {
+            sound.playDialoguePop();
+            setActiveNpcDialogue(npc);
+          }}
+          onEnterLocation={handleEnterLocation}
+          onFastTravelDistrict={handleFastTravel}
+          onInspectSign={(sign) => setInspectingSign(sign)}
+          onOpenEvent={(event) => setActiveCityEvent(event)}
+          onOpenTransit={() => setShowTransitModal(true)}
+          onAddVocabulary={handleAddVocabulary}
+          onGainXpCoins={handleReward}
+          onToggleViewMode={() => setViewMode("2d")}
+          viewMode="3d"
+        />
+      ) : (
+        <CityCanvas
+          player={player}
+          currentDistrictId={currentDistrictId}
+          currentLocationId={currentLocationId}
+          timeOfDay={timeOfDay}
+          weather={weather}
+          onSelectNpc={(npc) => {
+            sound.playDialoguePop();
+            setActiveNpcDialogue(npc);
+          }}
+          onEnterLocation={handleEnterLocation}
+          onFastTravelDistrict={handleFastTravel}
+          onInspectSign={(sign) => setInspectingSign(sign)}
+          onOpenEvent={(event) => setActiveCityEvent(event)}
+          onOpenTransit={() => setShowTransitModal(true)}
+          onAddVocabulary={handleAddVocabulary}
+          onGainXpCoins={handleReward}
+          onToggleViewMode={() => setViewMode("3d")}
+          viewMode="2d"
+        />
+      )}
 
       {/* 4. Building Interior Explorer (When stepped inside a cafe, airport, hotel, etc.) */}
       {activeLocationInterior && (
