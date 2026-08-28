@@ -2,40 +2,44 @@ import * as THREE from "three";
 
 export class CameraController {
   public camera: THREE.PerspectiveCamera;
-  private targetPosition: THREE.Vector3 = new THREE.Vector3();
-  private currentPosition: THREE.Vector3 = new THREE.Vector3();
+  private targetPosition = new THREE.Vector3();
+  private currentPosition = new THREE.Vector3(0, 18, 10);
+  private lookTarget = new THREE.Vector3();
 
-  // Oblique 3rd Quarter View Settings
-  public pitchAngle: number = (68 * Math.PI) / 180; // 68 degrees tilt
-  public baseDistance: number = 32;
-  public zoom: number = 1.0;
+  // GTA-style oblique third-quarter camera.
+  public pitchAngle = (68 * Math.PI) / 180;
+  public baseDistance = 32;
+  public zoom = 1.0;
 
   constructor(aspect: number) {
     this.camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 500);
-    this.camera.position.set(0, 30, 25);
+    this.camera.position.copy(this.currentPosition);
     this.camera.lookAt(0, 0, 0);
   }
 
-  public update(playerPos: THREE.Vector3, delta: number = 0.016): void {
+  public update(playerPos: THREE.Vector3, delta = 0.016): void {
+    const safeDelta = Math.min(Math.max(delta, 0.001), 0.05);
     const dist = this.baseDistance / this.zoom;
     const height = dist * Math.sin(this.pitchAngle);
     const depth = dist * Math.cos(this.pitchAngle);
 
     this.targetPosition.set(playerPos.x, playerPos.y + height, playerPos.z + depth);
 
-    // Smooth lerp camera tracking
-    this.currentPosition.lerp(this.targetPosition, 0.08);
+    // Frame-rate independent camera damping.
+    const smoothing = 1 - Math.exp(-8 * safeDelta);
+    this.currentPosition.lerp(this.targetPosition, smoothing);
     this.camera.position.copy(this.currentPosition);
 
-    const lookTarget = new THREE.Vector3(playerPos.x, playerPos.y + 1.2, playerPos.z);
-    this.camera.lookAt(lookTarget);
+    this.lookTarget.set(playerPos.x, playerPos.y + 1.2, playerPos.z);
+    this.camera.lookAt(this.lookTarget);
   }
 
   public setZoom(zoomLevel: number): void {
-    this.zoom = Math.max(0.6, Math.min(1.6, zoomLevel));
+    this.zoom = Math.max(0.65, Math.min(1.55, zoomLevel));
   }
 
   public resize(width: number, height: number): void {
+    if (height <= 0) return;
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
   }
